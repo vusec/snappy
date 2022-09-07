@@ -1,0 +1,32 @@
+# The config variable is present when this file is parsed
+# pylint: disable=undefined-variable
+
+import lit.formats
+from lit import TestingConfig
+from pathlib import Path
+
+lit_config.maxIndividualTestTime = 30
+
+config.name = "@PROJECT_NAME@"
+config.test_format = lit.formats.ShTest(True)
+
+config.test_source_root = "@CMAKE_CURRENT_SOURCE_DIR@"
+config.suffixes = [".ll", ".c", ".cpp"]
+
+python_interpreter = Path("@Python3_EXECUTABLE@")
+assert python_interpreter.is_file()
+
+test_wrapper_path = Path("@TEST_WRAPPER_PATH@")
+if not test_wrapper_path.is_file():
+    print(f"Test wrapper not found: {test_wrapper_path}")
+    exit(1)
+
+config.substitutions.append(
+    (
+        "%clang_snapshot_placement",
+        f"{python_interpreter} {test_wrapper_path} -fno-discard-value-names",
+    )
+)
+
+flag_file_path = Path(config.test_source_root) / "flag.txt"
+config.substitutions.append(("%flag_file", str(flag_file_path)))

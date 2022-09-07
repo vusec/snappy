@@ -3,6 +3,9 @@
 .vscode
 *.taint
 *.fast
+*.dfsan_snapshot
+*.placement
+*.xray_snapshot
 *.o
 *.so
 *.dwo

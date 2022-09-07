@@ -18,6 +18,7 @@ angora_common = { path = "../../common" }
 log = "0.4"
 env_logger = "0.7"
 ctor = "0.1"
+backtrace = "0.3"
 
 [profile.release]
 debug = true

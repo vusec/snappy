@@ -420,7 +420,7 @@ impl Branches {
         let mut num_new_edges;
         {
             let global_map_read = match status {
-                StatusType::Normal => self.global.virgin_branches(),
+                StatusType::Normal(_) => self.global.virgin_branches(),
                 StatusType::Timeout => self.global.tmouts_branches(),
                 StatusType::Crash => self.global.crashes_branches(),
                 _ => unreachable!(),
@@ -455,7 +455,7 @@ impl Branches {
         assert!(!bytes_to_update.nnz() > 0);
 
         if num_new_edges > 0 {
-            if status == StatusType::Normal {
+            if matches!(status, StatusType::Normal(_)) {
                 // only count virgin branches
                 self.global
                     .density
@@ -466,7 +466,7 @@ impl Branches {
         {
             // Lock and update global map
             let mut global_map_write = match status {
-                StatusType::Normal => self.global.virgin_branches_mut(),
+                StatusType::Normal(_) => self.global.virgin_branches_mut(),
                 StatusType::Timeout => self.global.tmouts_branches_mut(),
                 StatusType::Crash => self.global.crashes_branches_mut(),
                 _ => unreachable!(),
@@ -478,6 +478,14 @@ impl Branches {
         }
 
         (true, num_new_edges > 0, Some(num_current_edges))
+    }
+
+    pub fn trace(&self) -> &BranchBuf {
+        &self.trace
+    }
+
+    pub fn set_trace(&mut self, trace: &BranchBuf) {
+        self.trace.copy_from_slice(trace)
     }
 }
 
@@ -495,7 +503,10 @@ mod tests {
     fn parse_coverage_map_no_coverage() {
         let global_branches = Arc::new(GlobalBranches::new());
         let mut br = Branches::new(global_branches);
-        assert_eq!(br.has_new(StatusType::Normal, false), (false, false, None));
+        assert_eq!(
+            br.has_new(StatusType::Normal(Some(42)), false),
+            (false, false, None)
+        );
         assert_eq!(br.has_new(StatusType::Timeout, false), (false, false, None));
         assert_eq!(br.has_new(StatusType::Crash, false), (false, false, None));
     }
@@ -514,7 +525,10 @@ mod tests {
         assert_eq!(path.nnz(), 3);
         assert_eq!(path.data()[2], COUNT_LOOKUP[3]);
 
-        assert_eq!(br.has_new(StatusType::Normal, false), (true, true, Some(3)));
+        assert_eq!(
+            br.has_new(StatusType::Normal(Some(42)), false),
+            (true, true, Some(3))
+        );
     }
 
     #[test]
@@ -527,9 +541,12 @@ mod tests {
         trace[5] = 1;
         trace[8] = 3;
 
-        br.has_new(StatusType::Normal, false);
+        br.has_new(StatusType::Normal(Some(42)), false);
 
-        assert_eq!(br.has_new(StatusType::Normal, false), (false, false, None));
+        assert_eq!(
+            br.has_new(StatusType::Normal(Some(42)), false),
+            (false, false, None)
+        );
     }
 
     #[test]
@@ -542,7 +559,10 @@ mod tests {
         trace[5] = 1;
         trace[8] = 3;
 
-        assert_eq!(br.has_new(StatusType::Normal, true), (true, true, Some(3)));
+        assert_eq!(
+            br.has_new(StatusType::Normal(Some(42)), true),
+            (true, true, Some(3))
+        );
 
         let trace = &br.trace;
         assert!(trace.iter().all(|byte| *byte == 0));
@@ -558,9 +578,12 @@ mod tests {
         trace[5] = 1;
         trace[8] = 3;
 
-        br.has_new(StatusType::Normal, false);
+        br.has_new(StatusType::Normal(Some(42)), false);
 
-        assert_eq!(br.has_new(StatusType::Normal, true), (false, false, None));
+        assert_eq!(
+            br.has_new(StatusType::Normal(Some(42)), true),
+            (false, false, None)
+        );
 
         let trace = &br.trace;
         assert!(trace.iter().all(|byte| *byte == 0));

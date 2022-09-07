@@ -58,7 +58,7 @@ impl Depot {
 
     pub fn save(&self, status: StatusType, buf: &Vec<u8>, cmpid: u32) -> usize {
         match status {
-            StatusType::Normal => {
+            StatusType::Normal(_) => {
                 Self::save_input(&status, buf, &self.num_inputs, cmpid, &self.dirs.inputs_dir)
             },
             StatusType::Timeout => {
@@ -107,45 +107,50 @@ impl Depot {
             })
     }
 
-    pub fn add_entries(&self, conds: Vec<CondStmt>) {
-        let mut q = match self.queue.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => {
-                warn!("Mutex poisoned! Results may be incorrect. Continuing...");
-                poisoned.into_inner()
-            },
-        };
+    pub fn add_entries(&self, new_conditions: Vec<CondStmt>) {
+        let mut queue = self.queue.lock().unwrap();
 
-        for mut cond in conds {
-            if cond.is_desirable {
-                if let Some(v) = q.get_mut(&cond) {
-                    if !v.0.is_done() {
-                        // If existed one and our new one has two different conditions,
-                        // this indicate that it is explored.
-                        if v.0.base.condition != cond.base.condition {
-                            v.0.mark_as_done();
-                            q.change_priority(&cond, QPriority::done());
-                        } else {
-                            // Existed, but the new one are better
-                            // If the cond is faster than the older one, we prefer the faster,
-                            if config::PREFER_FAST_COND && v.0.speed > cond.speed {
-                                mem::swap(v.0, &mut cond);
-                                let priority = QPriority::init(cond.base.op);
-                                q.change_priority(&cond, priority);
-                            }
-                        }
-                    }
-                } else {
-                    log::trace!(
-                        "New condition inserted in queue: ({},{},{})",
-                        cond.base.cmpid,
-                        cond.base.context,
-                        cond.base.order
-                    );
+        for mut new_condition in new_conditions {
+            if !new_condition.is_desirable {
+                continue;
+            }
 
-                    let priority = QPriority::init(cond.base.op);
-                    q.push(cond, priority);
+            if let Some((queue_condition, _)) = queue.get_mut(&new_condition) {
+                if queue_condition.is_done() {
+                    continue;
                 }
+
+                // Since conditions are boolean, if the fuzzer was able to
+                // record a condition with the opposite value as the one in the
+                // queue, the condition has been solved.
+                if queue_condition.base.condition != new_condition.base.condition {
+                    queue_condition.mark_as_done();
+                    queue.change_priority(&new_condition, QPriority::done());
+                    continue;
+                }
+
+                // If the current test case ran substantially faster than the
+                // one with which the condition was previously encountered,
+                // substitute it.
+                if config::PREFER_FAST_COND
+                    && (new_condition.speed as f64 / queue_condition.speed as f64)
+                        <= config::FAST_COND_RATIO
+                {
+                    mem::swap(queue_condition, &mut new_condition);
+
+                    let priority = QPriority::init(new_condition.base.op);
+                    queue.change_priority(&new_condition, priority);
+                }
+            } else {
+                log::trace!(
+                    "New condition inserted in queue: ({},{},{})",
+                    new_condition.base.cmpid,
+                    new_condition.base.context,
+                    new_condition.base.order
+                );
+
+                let priority = QPriority::init(new_condition.base.op);
+                queue.push(new_condition, priority);
             }
         }
     }

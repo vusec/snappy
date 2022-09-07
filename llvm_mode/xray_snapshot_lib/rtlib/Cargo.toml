@@ -1,0 +1,46 @@
+[package]
+name = "XRaySnapshotRT"
+version = "0.1.0"
+authors = ["Elia Geretto <e.geretto@vu.nl>"]
+edition = "2018"
+
+[lib]
+crate-type = ["staticlib"]
+
+[features]
+# `angora` should not be a default feature, but I cannot enable it with Corrosion
+default = ["angora"]
+angora = ["runtime_fast", "angora_common"]
+
+[dependencies]
+libc = "0.2"
+snafu = "0.6"
+log = "0.4"
+env_logger = "0.7"
+once_cell = "1.4"
+serde = { version = "1", features = ["derive"] }
+csv = "1.1"
+serde_json = "1.0"
+ctor = "0.1.16"
+procfs = "0.13.0"
+stackmap = { git = "https://github.com/vusec/stackmap-rs.git", branch = "main" }
+findshlibs = "0.8.0"
+object = "0.23.0"
+memmap = "0.7.0"
+fallible-iterator = "0.2.0"
+unwind = { git = "https://github.com/EliaGeretto/rstack.git", branch = "add-x86_64" }
+rangemap = "0.1.12"
+bitflags = "1.0"
+runtime_fast = { path = "../../runtime_fast", default-features = false, optional = true }
+angora_common = { path = "../../../common", optional = true}
+hashbrown = { version = "0.11.2", features = ["nightly"] }
+bumpalo = { git = "https://github.com/EliaGeretto/bumpalo.git", branch = "custom-source-allocator", features = ["allocator_api"] }
+mmap-allocator = { git = "https://github.com/EliaGeretto/mmap-allocator.git" }
+backtrace = "0.3.63"
+
+[build-dependencies]
+bindgen = "0.53"
+cc = "1.0"
+
+[profile.release]
+debug = true

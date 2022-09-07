@@ -6,6 +6,7 @@ pub mod fork_client;
 pub mod log_data;
 pub mod shm;
 pub mod tag;
+pub mod test_case;
 
 // void __unfold_branch_fn(uint32_t) {}
 

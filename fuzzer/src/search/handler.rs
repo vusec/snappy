@@ -26,6 +26,7 @@ impl<'a> SearchHandler<'a> {
     ) -> Self {
         executor.local_stats.register(cond);
         cond.fuzz_times = cond.fuzz_times + 1;
+
         Self {
             running,
             executor,

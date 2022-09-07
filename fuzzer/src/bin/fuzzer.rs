@@ -36,6 +36,21 @@ fn main() {
              .value_name("PROM")
              .help("Sets the target (USE_TRACK or USE_PIN) for tracking, including taints, cmps.  Only set in LLVM mode.")
              .takes_value(true))
+        .arg(Arg::with_name("snapshot_placement_target")
+             .long("snapshot-placement")
+             .value_name("BIN")
+             .help("Sets the target for the snapshot placement binary. Only set in LLVM mode.")
+             .takes_value(true))
+        .arg(Arg::with_name("dfsan_snapshot_target")
+             .long("dfsan-snapshot")
+             .value_name("BIN")
+             .help("Sets the target for the DFSan snapshot binary. Only set in LLVM mode.")
+             .takes_value(true))
+        .arg(Arg::with_name("xray_snapshot_target")
+             .long("xray-snapshot")
+             .value_name("BIN")
+             .help("Sets the target for the XRay snapshot binary. Only set in LLVM mode.")
+             .takes_value(true))
         .arg(Arg::with_name("pargs")
             .help("Targeted program (USE_FAST) and arguments. Any \"@@\" will be substituted with the input filename from Angora.")
             .required(true)
@@ -83,6 +98,9 @@ fn main() {
              .long("deterministic-seed")
              .help("Random seed that makes the fuzzing run fully deterministic")
              .takes_value(true))
+        .arg(Arg::with_name("ignore_snapshot_threshold")
+             .long("ignore-snapshot-threshold")
+             .help("Always take a snapshot before fuzzing snapshottable conditions"))
        .get_matches();
 
     fuzz_main(
@@ -90,6 +108,9 @@ fn main() {
         matches.value_of("input_dir").unwrap(),
         matches.value_of("output_dir").unwrap(),
         matches.value_of("track_target").unwrap_or("-"),
+        matches.value_of("snapshot_placement_target").unwrap_or("-"),
+        matches.value_of("dfsan_snapshot_target").unwrap_or("-"),
+        matches.value_of("xray_snapshot_target").unwrap_or("-"),
         matches.values_of_lossy("pargs").unwrap(),
         value_t!(matches, "thread_jobs", usize).unwrap_or(1),
         value_t!(matches, "memory_limit", u64).unwrap_or(angora_common::config::MEM_LIMIT),
@@ -99,5 +120,6 @@ fn main() {
         matches.occurrences_of("disable_afl_mutation") == 0,
         matches.occurrences_of("disable_exploitation") == 0,
         value_t!(matches, "deterministic_seed", u64).ok(),
+        matches.is_present("ignore_snapshot_threshold"),
     );
 }

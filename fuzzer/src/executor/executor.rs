@@ -1,9 +1,12 @@
-use super::{limit::SetLimit, *};
+use super::{forksrv::DelayedForkServerFactory, limit::SetLimit, test_case_shm::TestCaseShm, *};
 
 use crate::{
     branches, command,
     cond_stmt::{self, NextState},
-    depot, stats, track,
+    depot,
+    fuzz_main::XRayMap,
+    stats::{self, TimeIns},
+    track,
 };
 use angora_common::{config, defs};
 
@@ -18,7 +21,7 @@ use std::{
         atomic::{compiler_fence, Ordering},
         Arc, RwLock,
     },
-    time::{self, Duration},
+    time::{self, Duration, Instant},
 };
 use wait_timeout::ChildExt;
 
@@ -32,8 +35,12 @@ pub struct Executor {
     cmd: command::CommandOpt,
     branches: branches::Branches,
     t_conds: cond_stmt::ShmConds,
+    shared_test_case: TestCaseShm,
     envs: HashMap<OsString, OsString>,
     forksrv: Option<Forksrv>,
+    delayed_fork_server_factory: Option<DelayedForkServerFactory>,
+    current_delayed_fork_server: Option<Forksrv>, // Should be dropped before the factory.
+    delayed_fork_server_failed: bool,
     depot: Arc<depot::Depot>,
     fd: PipeFd,
     tmout_cnt: usize,
@@ -42,6 +49,7 @@ pub struct Executor {
     pub has_new_path: bool,
     global_stats: Arc<RwLock<stats::ChartStats>>,
     pub local_stats: stats::LocalStats,
+    xray_maps: (XRayMap, XRayMap),
 }
 
 impl Executor {
@@ -50,10 +58,12 @@ impl Executor {
         global_branches: Arc<branches::GlobalBranches>,
         depot: Arc<depot::Depot>,
         global_stats: Arc<RwLock<stats::ChartStats>>,
+        xray_maps: (XRayMap, XRayMap),
     ) -> Self {
         // ** Share Memory **
         let branches = branches::Branches::new(global_branches);
         let t_conds = cond_stmt::ShmConds::new();
+        let shared_test_case = TestCaseShm::new();
 
         // ** Envs **
         let mut envs = HashMap::new();
@@ -73,6 +83,14 @@ impl Executor {
             OsString::from(defs::COND_STMT_ENV_VAR),
             t_conds.get_id().to_string().into(),
         );
+        envs.insert(
+            OsString::from(defs::INPUT_FILE_ENV_VAR),
+            cmd.out_file.clone().into(),
+        );
+
+        if let Some(rust_log_value) = env::var_os(defs::RUST_LOG_VARNAME) {
+            envs.insert(OsString::from(defs::RUST_LOG_VARNAME), rust_log_value);
+        }
 
         let fd = pipe_fd::PipeFd::new(&cmd.out_file);
         let forksrv = Some(
@@ -89,12 +107,35 @@ impl Executor {
             .expect("Failed to initialize fork server"),
         );
 
+        let delayed_fork_server_factory = DelayedForkServerFactory::new(
+            &cmd.delayed_forksrv_tmp_dir,
+            &cmd.snapshot_placement_target,
+            &cmd.dfsan_snapshot_target,
+            &cmd.xray_snapshot_target,
+            &envs,
+            &cmd.out_file,
+            shared_test_case.get_id(),
+            xray_maps.clone(),
+            fd.as_raw_fd(),
+            cmd.is_stdin,
+            cmd.uses_asan,
+            cmd.time_limit,
+            cmd.mem_limit,
+        )
+        .expect("Failed to initialize delayed fork server factory");
+
+        let local_stats = global_stats.read().unwrap().local_stats();
+
         Self {
             cmd,
             branches,
             t_conds,
+            shared_test_case,
             envs,
             forksrv,
+            delayed_fork_server_factory: Some(delayed_fork_server_factory),
+            current_delayed_fork_server: None,
+            delayed_fork_server_failed: false,
             depot,
             fd,
             tmout_cnt: 0,
@@ -102,7 +143,8 @@ impl Executor {
             last_f: defs::UNREACHABLE,
             has_new_path: false,
             global_stats,
-            local_stats: Default::default(),
+            local_stats,
+            xray_maps,
         }
     }
 
@@ -124,6 +166,159 @@ impl Executor {
         )
         .expect("Failed to reinitialize fork server");
         self.forksrv = Some(fs);
+    }
+
+    fn maybe_start_delayed_fork_server(&mut self, test_case: &[u8], cond: &cond_stmt::CondStmt) {
+        if self.local_stats.fuzz_type.modifies_tainted_only()
+            && self.current_delayed_fork_server.is_none()
+            && !self.delayed_fork_server_failed
+        {
+            if self.cmd.ignore_snapshot_threshold {
+                log::debug!("Ignoring snapshot threshold");
+                if !self.start_delayed_fork_server(test_case, cond) {
+                    self.delayed_fork_server_failed = true;
+                }
+            } else if let Some(snapshot_threshold) = self.local_stats.snapshot_threshold {
+                if self.local_stats.num_exec.0 as u64 >= snapshot_threshold {
+                    if !self.start_delayed_fork_server(test_case, cond) {
+                        self.delayed_fork_server_failed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn start_delayed_fork_server(&mut self, test_case: &[u8], cond: &cond_stmt::CondStmt) -> bool {
+        if test_case.len() > config::TEST_CASE_SHM_SIZE {
+            log::warn!("Test case too big, delayed fork server cannot be used");
+            self.current_delayed_fork_server = None;
+            return false;
+        }
+
+        let snapshot_start = TimeIns::default();
+
+        self.t_conds.set(cond);
+        self.write_test(test_case);
+
+        match self
+            .delayed_fork_server_factory
+            .as_mut()
+            .unwrap()
+            .build(&cond.offsets, self.local_stats.current_test_case)
+        {
+            Ok(Some((new_delayed_fork_server, target_info))) => {
+                self.current_delayed_fork_server = Some(new_delayed_fork_server);
+                self.local_stats.current_snapshot_position = Some(target_info);
+            },
+            Ok(None) => {
+                log::error!("Cached snapshot failure for test case {}", cond.base.belong);
+                self.current_delayed_fork_server = None;
+
+                let snapshot_time = snapshot_start.elapsed();
+                self.local_stats.snapshot_time += snapshot_time;
+                self.local_stats.hist_snapshot_micros += snapshot_time.0.as_micros() as u64;
+                log::error!(
+                    "Time wasted on cached snapshot failure: {:?}",
+                    snapshot_time.0
+                );
+
+                return false;
+            },
+            Err(error) => {
+                log::error!(
+                    "Could not initialize new delayed fork server for test case {}: {:#}",
+                    cond.base.belong,
+                    error
+                );
+                self.current_delayed_fork_server = None;
+
+                let analysis_cache = self
+                    .delayed_fork_server_factory
+                    .as_mut()
+                    .unwrap()
+                    .take_analysis_cache();
+
+                // Drop old factory first, so that the directories gets cleaned.
+                self.delayed_fork_server_factory = None;
+
+                log::error!("Reinitializing delayed fork server factory");
+                self.delayed_fork_server_factory = Some(
+                    DelayedForkServerFactory::new(
+                        &self.cmd.delayed_forksrv_tmp_dir,
+                        &self.cmd.snapshot_placement_target,
+                        &self.cmd.dfsan_snapshot_target,
+                        &self.cmd.xray_snapshot_target,
+                        &self.envs,
+                        &self.cmd.out_file,
+                        self.shared_test_case.get_id(),
+                        self.xray_maps.clone(),
+                        self.fd.as_raw_fd(),
+                        self.cmd.is_stdin,
+                        self.cmd.uses_asan,
+                        self.cmd.time_limit,
+                        self.cmd.mem_limit,
+                    )
+                    .expect("Failed to reinitialize delayed fork server factory"),
+                );
+                self.delayed_fork_server_factory
+                    .as_mut()
+                    .unwrap()
+                    .set_analysis_cache(analysis_cache);
+
+                let snapshot_time = snapshot_start.elapsed();
+                self.local_stats.snapshot_time += snapshot_time;
+                self.local_stats.hist_snapshot_micros += snapshot_time.0.as_micros() as u64;
+                log::error!(
+                    "Time wasted on failed snapshot and reinit: {:?}",
+                    snapshot_time.0
+                );
+
+                return false;
+            },
+        };
+
+        // The snapshot should always be taken before the target condition is
+        // reached. If that is not the case, the condition will never be
+        // influenced by the new test cases.
+        if self.t_conds.is_cond_reachable() {
+            log::error!("Snapshot taken after triggering target condition!");
+            log::error!(
+                "Target condition: (id: {}, ctx: {}, order: {})",
+                cond.base.cmpid,
+                cond.base.context,
+                cond.base.order
+            );
+            log::error!("Falling back to plain fork server");
+            self.current_delayed_fork_server = None;
+
+            let snapshot_time = snapshot_start.elapsed();
+            self.local_stats.snapshot_time += snapshot_time;
+            self.local_stats.hist_snapshot_micros += snapshot_time.0.as_micros() as u64;
+            log::error!("Time wasted on failed snapshot: {:?}", snapshot_time.0);
+
+            return false;
+        }
+
+        let snapshot_time = snapshot_start.elapsed();
+        self.local_stats.snapshot_time += snapshot_time;
+        self.local_stats.hist_snapshot_micros += snapshot_time.0.as_micros() as u64;
+        self.local_stats.num_snapshots.count();
+
+        true
+    }
+
+    fn stop_delayed_fork_server(&mut self) {
+        if let Some(current_delayed_fork_server) = self.current_delayed_fork_server.as_ref() {
+            log::debug!(
+                "Delayed fork server was used for {} executions.",
+                current_delayed_fork_server.execs().0
+            );
+            self.local_stats.hist_execs_per_snapshot +=
+                current_delayed_fork_server.execs().0 as u64;
+        }
+
+        self.current_delayed_fork_server = None;
+        self.delayed_fork_server_failed = false;
     }
 
     // FIXME: The location id may be inconsistent between track and fast programs.
@@ -188,6 +383,8 @@ impl Executor {
         buf: &Vec<u8>,
         cond: &mut cond_stmt::CondStmt,
     ) -> (StatusType, u64) {
+        self.maybe_start_delayed_fork_server(buf, cond);
+
         self.run_init();
         self.t_conds.set(cond);
         let mut status = self.run_inner(buf);
@@ -199,7 +396,13 @@ impl Executor {
         skip |= self.check_invariable(output, cond);
         self.check_consistent(output, cond);
 
-        self.do_if_has_new(buf, status, explored, cond.base.cmpid);
+        // Parse the coverage map only if the condition was solved, otherwise just reset it.
+        if explored == true {
+            self.do_if_has_new(buf, status, explored, cond.base.cmpid);
+        } else {
+            self.branches.clear_trace();
+        }
+
         status = self.check_timeout(status, cond);
 
         if skip {
@@ -221,7 +424,7 @@ impl Executor {
         compiler_fence(Ordering::SeqCst);
 
         // find difference
-        if unmem_status != StatusType::Normal {
+        if !matches!(unmem_status, StatusType::Normal(_)) {
             skip = true;
             warn!(
                 "Behavior changes if we unlimit memory!! status={:?}",
@@ -245,7 +448,7 @@ impl Executor {
             self.local_stats.find_new(&status);
             let id = self.depot.save(status, &buf, cmpid);
 
-            if status == StatusType::Normal {
+            if matches!(status, StatusType::Normal(_)) {
                 log::trace!("Analyzing interesting test case: {}", id);
 
                 self.local_stats
@@ -295,6 +498,8 @@ impl Executor {
 
     /// Run test case in `buf`. Update internal state according to findings.
     pub fn run(&mut self, buf: &Vec<u8>, cond: &mut cond_stmt::CondStmt) -> StatusType {
+        self.maybe_start_delayed_fork_server(buf, cond);
+
         self.run_init();
         let status = self.run_inner(buf);
         self.do_if_has_new(buf, status, false, 0);
@@ -318,10 +523,6 @@ impl Executor {
     /// Update timeout info in `cond` according to `status`.
     fn check_timeout(&mut self, status: StatusType, cond: &mut cond_stmt::CondStmt) -> StatusType {
         let mut ret_status = status;
-        if ret_status == StatusType::Error {
-            self.rebind_forksrv();
-            ret_status = StatusType::Timeout;
-        }
 
         if ret_status == StatusType::Timeout {
             self.tmout_cnt = self.tmout_cnt + 1;
@@ -343,10 +544,55 @@ impl Executor {
         self.write_test(buf);
 
         compiler_fence(Ordering::SeqCst);
-        let ret_status = if let Some(ref mut fs) = self.forksrv {
-            fs.run()
-        } else {
-            self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit)
+        let ret_status = match (
+            self.current_delayed_fork_server.as_mut(),
+            self.forksrv.as_mut(),
+        ) {
+            (Some(delayed_fork_server), _) if self.shared_test_case.set_content(buf).is_ok() => {
+                log::trace!("Running with delayed fork server");
+
+                // The trace should be restored to what it was at the moment of
+                // the snapshot. However, this adds a substantial performance
+                // overhead to snapshot restores. A trace clearing is used as a
+                // significantly faster approximation.
+
+                let exec_begin = Instant::now();
+                let status = delayed_fork_server
+                    .run()
+                    .expect("Could not start child from delayed fork server");
+                self.local_stats.hist_delayed_execs_micros +=
+                    exec_begin.elapsed().as_micros() as u64;
+
+                status
+            },
+            (_, Some(fork_server)) => {
+                log::trace!("Running with plain fork server");
+
+                let exec_begin = Instant::now();
+                let status = fork_server.run();
+
+                // Ignore executions from AFL mutators, since they produce a different distribution
+                if self.local_stats.fuzz_type.modifies_tainted_only() {
+                    self.local_stats.hist_plain_execs_micros +=
+                        exec_begin.elapsed().as_micros() as u64;
+                }
+
+                match status {
+                    Ok(status) => status,
+                    Err(error) => {
+                        log::warn!(
+                            "Could not spawn child from main fork server, rebinding: {:#}",
+                            error
+                        );
+                        self.rebind_forksrv();
+                        StatusType::Timeout
+                    },
+                }
+            },
+            _ => {
+                log::trace!("Running without fork server");
+                self.run_target(&self.cmd.main, self.cmd.mem_limit, self.cmd.time_limit)
+            },
         };
         compiler_fence(Ordering::SeqCst);
 
@@ -361,8 +607,11 @@ impl Executor {
                 self.fd.rewind();
             }
             if let Some(ref mut fs) = self.forksrv {
-                let status = fs.run();
-                if status == StatusType::Error {
+                if let Err(error) = fs.run() {
+                    log::warn!(
+                        "Could not spawn child from main fork server, rebinding: {:#}",
+                        error
+                    );
                     self.rebind_forksrv();
                     return defs::SLOW_SPEED;
                 }
@@ -384,12 +633,7 @@ impl Executor {
             self.cmd.track_path.clone().into(),
         );
 
-        if let Some(rust_log_value) = env::var_os(defs::RUST_LOG_VARNAME) {
-            self.envs
-                .insert(OsString::from(defs::RUST_LOG_VARNAME), rust_log_value);
-        }
-
-        let t_now: stats::TimeIns = Default::default();
+        let track_start: stats::TimeIns = Default::default();
 
         self.write_test(buf);
 
@@ -397,17 +641,22 @@ impl Executor {
         let ret_status = self.run_target(
             &self.cmd.track,
             config::MEM_LIMIT_TRACK,
-            //self.cmd.time_limit *
             config::TIME_LIMIT_TRACK,
         );
         compiler_fence(Ordering::SeqCst);
 
-        if ret_status != StatusType::Normal {
-            error!(
+        if !matches!(ret_status, StatusType::Normal(_)) {
+            log::error!(
                 "Crash or hang while tracking! -- {:?},  id: {}",
-                ret_status, id
+                ret_status,
+                id
             );
-            return vec![];
+
+            let track_time = track_start.elapsed();
+            self.local_stats.track_time += track_time;
+            self.local_stats.hist_track_micros += track_time.0.as_micros() as u64;
+
+            return Vec::new();
         }
 
         let cond_list = track::load_track_data(
@@ -418,7 +667,10 @@ impl Executor {
             self.cmd.enable_exploitation,
         );
 
-        self.local_stats.track_time += t_now.elapsed();
+        let track_time = track_start.elapsed();
+        self.local_stats.track_time += track_time;
+        self.local_stats.hist_track_micros += track_time.0.as_micros() as u64;
+
         cond_list
     }
 
@@ -474,7 +726,7 @@ impl Executor {
                     {
                         StatusType::Crash
                     } else {
-                        StatusType::Normal
+                        StatusType::Normal(Some(status_code))
                     }
                 } else {
                     StatusType::Crash
@@ -493,6 +745,12 @@ impl Executor {
 
     /// Update global stats with collected local data.
     pub fn update_log(&mut self) {
+        self.stop_delayed_fork_server();
+
+        if self.local_stats.fuzz_type.modifies_tainted_only() {
+            self.local_stats.hist_execs_per_snap_cond += self.local_stats.num_exec.0 as u64;
+        }
+
         self.global_stats
             .write()
             .unwrap()

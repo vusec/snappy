@@ -5,21 +5,23 @@ authors = ["sp1npx <spinpx@gmail.com>"]
 edition = "2018"
 
 [lib]
-crate-type = ["staticlib"] # "cdylib"
+crate-type = ["staticlib", "rlib"]
 
 [features]
 default = ["autoinit"]
-autoinit = ["ctor", "log", "env_logger"]
+autoinit = ["ctor", "env_logger"]
 
 [dependencies]
 libc = "0.2"
-byteorder = "1.2"
 angora_common = { path = "../../common" }
 once_cell = "1.7.2"
 ctor = { version = "0.1.9", optional = true }
 snafu = "0.6.10"
-log = { version = "0.4", optional = true }
+log = "0.4"
 env_logger = { version = "0.7", optional = true }
+backtrace = "0.3"
+procfs = "0.13.0"
+paste = "1.0"
 
 [build-dependencies]
 cc = "1.0"

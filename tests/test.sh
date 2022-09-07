@@ -45,10 +45,16 @@ rm -f ${target}.fast ${target}.cmp ${target}.taint
 # export ANGORA_CUSTOM_FN_CONTEXT=0
 
 angora_prefix='../angora_prefix'
-ANGORA_USE_ASAN=1 USE_FAST=1 \
+USE_FAST=1 \
     "${angora_prefix}/bin/angora-clang" ${target}.c -lz -o ${target}.fast
 USE_TRACK=1 \
     "${angora_prefix}/bin/angora-clang" ${target}.c -lz -o ${target}.taint
+"${angora_prefix}/bin/clang_snapshot_placement" \
+    ${target}.c -o ${target}.placement
+"${angora_prefix}/bin/clang_dfsan_snapshot" \
+    ${target}.c -o ${target}.dfsan_snapshot
+"${angora_prefix}/bin/clang_xray_snapshot" \
+    ${target}.c -o ${target}.xray_snapshot
 
 # USE_PIN=1 ${bin_dir}/angora-clang ${target}.c -lz -o ${target}.pin
 #LLVM_COMPILER=clang wllvm -O0 -g ${target}.c -lz -o ${target}
@@ -70,7 +76,13 @@ args=`cat ${args_file}`
 
 cmd="$envs $fuzzer -M 0 -A -i $input -o $output -j $num_jobs"
 if [ $MODE = "llvm" ]; then
-    cmd="$cmd -m llvm --deterministic-seed 42 -t ${target}.taint ${sync_afl} -- ${target}.fast ${args}"
+    cmd="$cmd -m llvm
+        --deterministic-seed 42
+        -t ${target}.taint
+        --snapshot-placement ${target}.placement
+        --dfsan-snapshot ${target}.dfsan_snapshot
+        --xray-snapshot ${target}.xray_snapshot
+        ${sync_afl} -- ${target}.fast ${args}"
 elif [ $MODE = "pin" ]; then
     cmd="$cmd -m pin -t ${target}.pin ${sync_afl} -- ${target}.fast ${args}"
 fi;

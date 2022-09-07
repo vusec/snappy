@@ -1,0 +1,46 @@
+[
+  [
+    {
+      "type": "Stack",
+      "record_id": %RECORD_ID%,
+      "location_idx": 0,
+      "location_offt": 0,
+      "stack_map_num_functions_hint": 1,
+      "stack_map_file_hint": "%BINARY_PATH%"
+    },
+    0
+  ],
+  [
+    {
+      "type": "Stack",
+      "record_id": %RECORD_ID%,
+      "location_idx": 0,
+      "location_offt": 1,
+      "stack_map_num_functions_hint": 1,
+      "stack_map_file_hint": "%BINARY_PATH%"
+    },
+    1
+  ],
+  [
+    {
+      "type": "Stack",
+      "record_id": %RECORD_ID%,
+      "location_idx": 0,
+      "location_offt": 2,
+      "stack_map_num_functions_hint": 1,
+      "stack_map_file_hint": "%BINARY_PATH%"
+    },
+    2
+  ],
+  [
+    {
+      "type": "Stack",
+      "record_id": %RECORD_ID%,
+      "location_idx": 0,
+      "location_offt": 3,
+      "stack_map_num_functions_hint": 1,
+      "stack_map_file_hint": "%BINARY_PATH%"
+    },
+    3
+  ]
+]

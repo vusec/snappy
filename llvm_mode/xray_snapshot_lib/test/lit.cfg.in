@@ -1,0 +1,63 @@
+# The config variable is present when this file is parsed
+# pylint: disable=undefined-variable
+
+import lit.formats
+from pathlib import Path
+
+lit_config.maxIndividualTestTime = 30
+
+config.name = "@PROJECT_NAME@"
+config.test_format = lit.formats.ShTest(True)
+
+config.test_source_root = "@CMAKE_CURRENT_SOURCE_DIR@"
+config.suffixes = [".ll", ".c", ".cpp"]
+
+pass_path = Path("@PASS_PATH@")
+if not pass_path.is_file():
+    print(f"Pass not found: {pass_path}")
+    exit(1)
+
+config.substitutions.append(("%opt_stackmapper", f"opt -load {pass_path}"))
+
+python_interpreter = Path("@Python3_EXECUTABLE@")
+assert python_interpreter.is_file()
+
+test_wrapper_path = Path("@TEST_WRAPPER_PATH@")
+if not test_wrapper_path.is_file():
+    print(f"Test wrapper not found: {test_wrapper_path}")
+    exit(1)
+
+config.substitutions.append(
+    (
+        "%clang_xray_snapshot",
+        f"{python_interpreter} {test_wrapper_path} "
+        + "-fno-discard-value-names -g -fuse-ld=lld",
+    )
+)
+config.substitutions.append(
+    (
+        (
+            "%clang_cpp_xray_snapshot",
+            f"{python_interpreter} {test_wrapper_path}++ "
+            + "-fno-discard-value-names -g -fuse-ld=lld",
+        )
+    )
+)
+
+# Install shared libraries to be overridden in `CMAKE_INSTALL_PREFIX`
+install_libdir = Path("@CMAKE_INSTALL_FULL_LIBDIR@")
+config.substitutions.append(("%ld_library_path", f"LD_LIBRARY_PATH={install_libdir}"))
+
+flag_file_path = Path(config.test_source_root) / "flag.txt"
+config.substitutions.append(("%flag_file", str(flag_file_path)))
+
+generate_target_script_path = (
+    Path(config.test_source_root) / "generate_snapshot_target.py"
+)
+config.substitutions.append(
+    ("%generate_snapshot_target", str(generate_target_script_path))
+)
+
+pkg_config_path = os.environ.get('PKG_CONFIG_PATH')
+if pkg_config_path is not None:
+    config.environment['PKG_CONFIG_PATH'] = pkg_config_path

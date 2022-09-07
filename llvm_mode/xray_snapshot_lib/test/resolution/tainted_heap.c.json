@@ -1,0 +1,38 @@
+[
+  [
+    {
+      "type": "Heap",
+      "id": 3,
+      "size": 30,
+      "offset": 0
+    },
+    0
+  ],
+  [
+    {
+      "type": "Heap",
+      "id": 3,
+      "size": 30,
+      "offset": 1
+    },
+    1
+  ],
+  [
+    {
+      "type": "Heap",
+      "id": 3,
+      "size": 30,
+      "offset": 2
+    },
+    2
+  ],
+  [
+    {
+      "type": "Heap",
+      "id": 3,
+      "size": 30,
+      "offset": 3
+    },
+    3
+  ]
+]

@@ -44,7 +44,8 @@ fn main() -> Result<(), anyhow::Error> {
     let init_t = SystemTime::now();
     let n = 10000;
     for _ in 0..n {
-        fs.run();
+        fs.run()
+            .expect("Spawning new child from fork server failed");
     }
 
     let running_time = init_t.elapsed().unwrap().as_secs();

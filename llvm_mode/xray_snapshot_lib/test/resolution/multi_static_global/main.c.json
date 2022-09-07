@@ -1,0 +1,42 @@
+[
+  [
+    {
+      "type": "Static",
+      "symbol": "g_buffer",
+      "symbol_idx": 1,
+      "offset": 0,
+      "binary_path": "%BINARY_PATH%"
+    },
+    0
+  ],
+  [
+    {
+      "type": "Static",
+      "symbol": "g_buffer",
+      "symbol_idx": 1,
+      "offset": 1,
+      "binary_path": "%BINARY_PATH%"
+    },
+    1
+  ],
+  [
+    {
+      "type": "Static",
+      "symbol": "g_buffer",
+      "symbol_idx": 1,
+      "offset": 2,
+      "binary_path": "%BINARY_PATH%"
+    },
+    2
+  ],
+  [
+    {
+      "type": "Static",
+      "symbol": "g_buffer",
+      "symbol_idx": 1,
+      "offset": 3,
+      "binary_path": "%BINARY_PATH%"
+    },
+    3
+  ]
+]

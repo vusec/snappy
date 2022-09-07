@@ -5,8 +5,9 @@ pub static ANGORA_BIN_DIR: &str = "ANGORA_BIN_DIR";
 
 // executor.rs
 pub static TRACK_OUTPUT_VAR: &str = "ANGORA_TRACK_OUTPUT";
-pub static COND_STMT_ENV_VAR: &str = "ANGORA_COND_STMT_SHM_ID";
-pub static BRANCHES_SHM_ENV_VAR: &str = "ANGORA_BRANCHES_SHM_ID";
+pub const COND_STMT_ENV_VAR: &str = "ANGORA_COND_STMT_SHM_ID";
+pub const BRANCHES_SHM_ENV_VAR: &str = "ANGORA_BRANCHES_SHM_ID";
+pub const INPUT_FILE_ENV_VAR: &str = "ANGORA_INPUT_FILE";
 pub static LD_LIBRARY_PATH_VAR: &str = "LD_LIBRARY_PATH";
 pub const RUST_LOG_VARNAME: &str = "RUST_LOG";
 pub static ASAN_OPTIONS_VAR: &str = "ASAN_OPTIONS";
@@ -24,13 +25,22 @@ pub static INPUTS_DIR: &str = "queue";
 
 // forksrv.rs
 pub static ENABLE_FORKSRV: &str = "ANGORA_ENABLE_FORKSRV";
-pub static FORKSRV_SOCKET_PATH_VAR: &str = "ANGORA_FORKSRV_SOCKET_PATH";
+pub const FORKSRV_SOCKET_PATH_VAR: &str = "ANGORA_FORKSRV_SOCKET_PATH";
+pub const TEST_CASE_SHM_ID_VARNAME: &str = "XRAY_TEST_CASE_SHM_ID";
 
 // command.rs
 pub static ANGORA_DIR_NAME: &str = "angora";
 pub static ANGORA_LOG_FILE: &str = "angora_log.csv";
 pub static COND_QUEUE_FILE: &str = "cond_queue.csv";
 pub static CHART_STAT_FILE: &str = "chart_stat.json";
+pub const EXECS_PER_SNAP_COND_HIST_FILE: &str = "execs_per_snap_cond.hist";
+pub const EXECS_PER_SNAP_COND_DECAY_HIST_FILE: &str = "execs_per_snap_cond_decay.hist";
+pub const EXECS_PER_SNAPSHOT_HIST_FILE: &str = "execs_per_snapshot.hist";
+pub const DELAYED_EXECS_MICROS_HIST_FILE: &str = "delayed_execs_micros.hist";
+pub const PLAIN_EXECS_MICROS_HIST_FILE: &str = "plain_execs_micros.hist";
+pub const TRACK_MICROS_HIST_FILE: &str = "track_micros.hist";
+pub const SNAPSHOT_MICROS_HIST_FILE: &str = "snapshot_micros.hist";
+pub const SNAPSHOT_POSITION_STATS_FILE: &str = "snapshot_positions.json";
 
 // tmpfs.rs
 pub static PERSIST_TRACK_FILES: &str = "ANGORA_DISABLE_TMPFS";

@@ -1,115 +1,78 @@
-# Angora
+# Snappy
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Build Status](https://api.cirrus-ci.com/github/AngoraFuzzer/Angora.svg)](https://cirrus-ci.com/github/AngoraFuzzer/Angora)
+Snappy is a performance optimization implemented on top of
+[Angora][original-angora]. Its goal is to speed up fuzzing by aggressively
+pruning redundant computations with adaptive and mutable snapshots. The key
+ideas are to: (i) push the snapshot as deep in the target execution as possible
+and also end its execution as early as possible, according to how the target
+processes the relevant input data (adaptive placement); (ii) for each identified
+placement, cache snapshots across different inputs by patching the snapshot
+just-in-time with the relevant input data (mutable restore).
 
-Angora is a mutation-based coverage guided fuzzer. The main goal of Angora is 
-to increase branch coverage by solving path constraints without symbolic 
-execution. 
+A thorough description of this work can be found in "Snappy: Efficient Fuzzing
+with Adaptive and Mutable Snapshots", published at ACSAC 2022.
 
+The FuzzBench fork used for our evaluation can be found [here][fuzzbench-snappy].
 
-## Published Work
+[original-angora]: https://github.com/AngoraFuzzer/Angora
+[fuzzbench-snappy]: https://github.com/vusec/fuzzbench-snappy
 
-Arxiv: [Angora: Efficient Fuzzing by Principled Search](https://arxiv.org/abs/1803.01307), S&P 2018.
 
 ## Building Angora
 
 ### Build Requirements
 
-- Linux-amd64 (Tested on Ubuntu 16.04/18.04 and Debian Buster)
-- Rust stable (>= 1.31), can be obtained using [rustup](https://rustup.rs)
-- [LLVM 4.0.0 - 7.1.0](http://llvm.org/docs/index.html) : run `PREFIX=/path-to-install ./build/install_llvm.sh`.
+- libunwind 1.6.2
+- Linux 5.15
+- LLVM 11.1 (with custom patches)
+- CMake 3.13
+- Python 3.8
+- Rust Nightly
+- [Corrosion](https://github.com/AndrewGaspar/corrosion.git)
 
-### Environment Variables
 
-Append the following entries in the shell configuration file (`~/.bashrc`, `~/.zshrc`).
+### Building
 
-```
-export PATH=/path-to-clang/bin:$PATH
-export LD_LIBRARY_PATH=/path-to-clang/lib:$LD_LIBRARY_PATH
-```
+Detailed building instructions for Ubuntu Xenial can be found in the [FuzzBench
+fork][snappy-build] that was used for our evaluation. The repository includes
+the custom LLVM patches for LLVM 11.1 that are required to build the
+instrumentation passes.
 
-### Fuzzer Compilation
+The corresponding `Dockerfile` includes instructions on how to build libcxx and
+libcxx-abi for C++ support.
 
-The build script will resolve most dependencies and setup the 
-runtime environment.
+[snappy-build]: https://github.com/vusec/fuzzbench-snappy/blob/snappy/fuzzers/snappy/builder.Dockerfile
 
-```shell
-./build/build.sh
-```
 
 ### System Configuration
 
-As with AFL, system core dumps must be disabled.
+As with AFL and Angora, system core dumps must be disabled.
 
 ```shell
 echo core | sudo tee /proc/sys/kernel/core_pattern
 ```
 
-## Test
-Test if Angora is builded successfully.
-```
-cd /path-to-angora/tests
-./test.sh mini
-```
 
-## Running Angora
+## Running Snappy
 
 ### Build Target Program
 
-Angora compiles the program into two separate binaries, each with their respective
-instrumentation. Using `autoconf` programs as an example, here are the steps required.
+The target program needs to be rebuilt 5 times: 2 for the original Angora
+instrumentations and 3 for the Snappy-related instrumentations. All five
+instrumentations provide custom compiler wrappers that are built and installed
+with the fuzzer. Detailed instructions on the appropriate flags and environment
+variables that need to be used to build the program can be found in the build
+scripts contained in the [FuzzBench fork][target-build] that was used for our
+evaluation.
 
-```
-# Use the instrumenting compilers
-CC=/path/to/angora/bin/angora-clang \
-CXX=/path/to/angora/bin/angora-clang++ \
-LD=/path/to/angora/bin/angora-clang \
-PREFIX=/path/to/target/directory \
-./configure --disable-shared
+[target-build]: https://github.com/vusec/fuzzbench-snappy/blob/0f2cab6dc1cf8335035f9d5f0eed8b0c58189821/fuzzers/snappy/fuzzer.py#L107-L118
 
-# Build with taint tracking support 
-USE_TRACK=1 make -j
-make install
-
-# Save the compiled target binary into a new directory
-# and rename it with .taint postfix, such as uniq.taint
-
-# Build with light instrumentation support
-make clean
-USE_FAST=1 make -j
-make install
-
-# Save the compiled binary into the directory previously
-# created and rename it with .fast postfix, such as uniq.fast
-
-```
-
-If you fail to build by this approach, try `wllvm` and `gllvm` described in [Build a target program](./docs/build_target.md#wllvm-or-gllvm).
-
-Also, we have implemented taint analysis with libdft64 instead of DFSan ([Use libdft64 for taint tracking](./docs/pin_mode.md)). 
 
 ### Fuzzing
 
-```
-./angora_fuzzer -i input -o output -t path/to/taint/program -- path/to/fast/program [argv]
-```
+Once all five instrumented versions of the target program have been built, the
+fuzzer can be started referencing the instrumented binaries as command line
+arguments. A list of all the arguments can be found in our [FuzzBench
+fork][target-run].
 
------------
-
-For more information, please refer to the documentation under the 
-`docs/` directory.
-
-- [Angora Overview](./docs/overview.md)
-- [Build a target program](./docs/build_target.md)
-- [Running Angora](./docs/running.md)
-- [Use libdft64 for taint tracking](./docs/pin_mode.md)
-- [Example - Fuzz program file by Angora](./docs/example.md)
-- [Run Angora on LAVA](./docs/lava.md)
-- [Exploit attack points](./docs/exploitation.md)
-- [Usage](./docs/usage.md)
-- [Configuration Files](./docs/configuration.md)
-- [Environment variables](./docs/environment_variables.md)
-- [UI Terminology](./docs/ui.md)
-- [Troubleshoot](./docs/troubleshoot.md)
-- [Related works](./docs/related_works.md)
+[target-run]: https://github.com/vusec/fuzzbench-snappy/blob/0f2cab6dc1cf8335035f9d5f0eed8b0c58189821/fuzzers/snappy/fuzzer.py#L121-L174

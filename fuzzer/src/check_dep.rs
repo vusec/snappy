@@ -84,5 +84,6 @@ pub fn check_dep(in_dir: &str, out_dir: &str, cmd: &CommandOpt) {
     check_fast(&cmd.main.0);
     if !cmd.mode.is_pin_mode() {
         check_track_llvm(&cmd.track.0);
+        // TODO: Add checks for binaries here.
     }
 }

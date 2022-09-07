@@ -4,10 +4,12 @@ use chrono::prelude::Local;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     io::prelude::*,
     path::{Path, PathBuf},
+    process::Command,
+    str::FromStr,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, RwLock,
@@ -15,8 +17,10 @@ use std::{
     thread,
     time::{self, Duration},
 };
+use yaml_rust::{Yaml, YamlLoader};
 
 use crate::{bind_cpu, branches, check_dep, command, depot, executor, fuzz_loop, stats};
+use anyhow::{anyhow, Context, Result};
 use ctrlc;
 use libc;
 use pretty_env_logger;
@@ -26,6 +30,9 @@ pub fn fuzz_main(
     in_dir: &str,
     out_dir: &str,
     track_target: &str,
+    snapshot_placement_bin_path: &str,
+    dfsan_snapshot_bin_path: &str,
+    xray_snapshot_bin_path: &str,
     pargs: Vec<String>,
     num_jobs: usize,
     mem_limit: u64,
@@ -35,6 +42,7 @@ pub fn fuzz_main(
     enable_afl: bool,
     enable_exploitation: bool,
     deterministic_seed: Option<u64>,
+    ignore_snapshot_threshold: bool,
 ) {
     pretty_env_logger::init();
 
@@ -42,6 +50,9 @@ pub fn fuzz_main(
     let command_option = command::CommandOpt::new(
         mode,
         track_target,
+        snapshot_placement_bin_path,
+        dfsan_snapshot_bin_path,
+        xray_snapshot_bin_path,
         pargs,
         &angora_out_dir,
         search_method,
@@ -50,10 +61,16 @@ pub fn fuzz_main(
         enable_afl,
         enable_exploitation,
         deterministic_seed,
+        ignore_snapshot_threshold,
     );
     log::info!("{:#?}", command_option);
 
     check_dep::check_dep(in_dir, out_dir, &command_option);
+
+    let dfsan_snapshot_xray_map = parse_xray_map(&command_option.dfsan_snapshot_target.0)
+        .expect("Parsing DFSan snapshot binary failed");
+    let xray_snapshot_xray_map = parse_xray_map(&command_option.xray_snapshot_target.0)
+        .expect("Parsing XRay snapshot binary failed");
 
     let depot = Arc::new(depot::Depot::new(seeds_dir, &angora_out_dir));
     log::info!("{:#?}", depot.dirs);
@@ -70,6 +87,10 @@ pub fn fuzz_main(
         global_branches.clone(),
         depot.clone(),
         stats.clone(),
+        (
+            dfsan_snapshot_xray_map.clone(),
+            xray_snapshot_xray_map.clone(),
+        ),
     );
 
     log::trace!("Processing seed test cases");
@@ -92,6 +113,7 @@ pub fn fuzz_main(
         &global_branches,
         &depot,
         &stats,
+        (dfsan_snapshot_xray_map, xray_snapshot_xray_map),
     );
 
     let log_file = match fs::File::create(angora_out_dir.join(defs::ANGORA_LOG_FILE)) {
@@ -189,6 +211,7 @@ fn init_cpus_and_run_fuzzing_threads(
     global_branches: &Arc<branches::GlobalBranches>,
     depot: &Arc<depot::Depot>,
     stats: &Arc<RwLock<stats::ChartStats>>,
+    xray_maps: (XRayMap, XRayMap),
 ) -> (Vec<thread::JoinHandle<()>>, Arc<AtomicUsize>) {
     let free_cpus = bind_cpu::find_free_cpus(num_jobs);
     let bind_cpus = if free_cpus.len() < num_jobs {
@@ -206,6 +229,7 @@ fn init_cpus_and_run_fuzzing_threads(
         let global_branches = Arc::clone(&global_branches);
         let stats = Arc::clone(&stats);
         let fuzz_thread_count = Arc::clone(&fuzz_thread_count);
+        let xray_maps = xray_maps.clone();
 
         let command_option = command_option.specify(thread_id + 1);
         let cid = if bind_cpus { free_cpus[thread_id] } else { 0 };
@@ -232,6 +256,7 @@ fn init_cpus_and_run_fuzzing_threads(
                 global_branches,
                 stats,
                 &mut rng,
+                xray_maps,
             );
 
             fuzz_thread_count.fetch_sub(1, Ordering::SeqCst);
@@ -290,4 +315,76 @@ fn main_thread_sync_and_log(
             }
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum XRayHookKind {
+    Entry,
+    Exit,
+}
+
+impl FromStr for XRayHookKind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ENTRY" => Ok(Self::Entry),
+            "EXIT" => Ok(Self::Exit),
+            _ => Err(anyhow!("Malformed kind entry")),
+        }
+    }
+}
+
+pub type FunctionID = i32;
+pub type XRayMap = HashMap<String, BTreeSet<FunctionID>>;
+
+pub fn parse_xray_map(binary_path: impl AsRef<Path>) -> Result<XRayMap> {
+    let xray_map = Command::new("llvm-xray")
+        .arg("extract")
+        .arg("--symbolize")
+        .arg("--no-demangle")
+        .arg(binary_path.as_ref())
+        .output()
+        .with_context(|| {
+            format!(
+                "Failed to execute llvm-xray on: {}",
+                binary_path.as_ref().display()
+            )
+        })?;
+    let xray_map =
+        std::str::from_utf8(&xray_map.stdout).context("Failed to parse output as UTF-8")?;
+    let xray_map = YamlLoader::load_from_str(xray_map).with_context(|| {
+        format!(
+            "Failed to parse XRay YAML map from: {}",
+            binary_path.as_ref().display(),
+        )
+    })?;
+    let xray_map = &xray_map[0];
+
+    let mut parsed_xray_map: XRayMap = HashMap::new();
+    for xray_hook in xray_map.as_vec().ok_or(anyhow!("Malformed YAML"))? {
+        let xray_hook = xray_hook.as_hash().ok_or(anyhow!("Malformed YAML"))?;
+        let id = xray_hook[&Yaml::from_str("id")]
+            .as_i64()
+            .ok_or(anyhow!("Malformed id field"))?;
+
+        let mut function_name = xray_hook[&Yaml::from_str("function-name")]
+            .as_str()
+            .ok_or(anyhow!("Malformed function-name field"))?
+            .to_string();
+
+        // dfsw$ should not be stripped because it identifies functions that
+        // simply wrap the plain symbol. Stripping it would cause a double
+        // count.
+        if let Some(stripped_function_name) = function_name.strip_prefix("dfs$") {
+            function_name = stripped_function_name.to_string();
+        }
+
+        parsed_xray_map
+            .entry(function_name)
+            .or_default()
+            .insert(id as FunctionID);
+    }
+
+    Ok(parsed_xray_map)
 }

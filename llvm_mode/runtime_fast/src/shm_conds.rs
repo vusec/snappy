@@ -1,12 +1,13 @@
 // corresponding to fuzzer/src/cond_stmt/shm_conds.rs
 
-use super::context;
 use angora_common::{cond_stmt_base::CondStmtBase, shm};
 use once_cell::sync::OnceCell;
 use std::{
     process,
     sync::{Mutex, MutexGuard},
 };
+
+const NOT_SOLVED_EXIT_CODE: i32 = 31;
 
 // TODO: Make it an AtomicU32 or a thread-local variable. This is fine only for
 // single-threaded programs.
@@ -69,6 +70,14 @@ impl ShmConds {
         self.rt_order = 0x8000;
         self.mark_reachable(condition);
         set_cmpid(0);
+
+        if self.cond.get_output() != 0 {
+            log::trace!("Condition not solved, exiting.");
+            process::exit(NOT_SOLVED_EXIT_CODE);
+        } else {
+            log::trace!("Condition solved, finishing run.")
+        }
+
         condition
     }
 
@@ -77,13 +86,23 @@ impl ShmConds {
         self.rt_order = 0x8000;
         self.mark_reachable((condition == self.cond.arg2) as u32);
         set_cmpid(0);
+
+        if self.cond.get_output() != 0 {
+            log::trace!("Condition not solved, exiting.");
+            process::exit(NOT_SOLVED_EXIT_CODE);
+        } else {
+            log::trace!("Condition solved, finishing run.")
+        }
+
         condition
     }
 
-    pub fn reset(&mut self) {
-        self.rt_order = 0;
+    pub fn reset_target(&mut self) {
         set_cmpid(self.cond.cmpid);
-        context::reset_context();
+    }
+
+    pub fn cond(&self) -> &CondStmtBase {
+        &self.cond
     }
 }
 

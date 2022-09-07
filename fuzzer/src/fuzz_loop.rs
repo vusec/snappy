@@ -1,6 +1,6 @@
 use crate::{
     branches::GlobalBranches, command::CommandOpt, cond_stmt::NextState, depot::Depot,
-    executor::Executor, fuzz_type::FuzzType, search::*, stats,
+    executor::Executor, fuzz_main::XRayMap, fuzz_type::FuzzType, search::*, stats,
 };
 use rand::prelude::*;
 use std::sync::{
@@ -15,6 +15,7 @@ pub fn fuzz_loop<R: Rng + ?Sized>(
     global_branches: Arc<GlobalBranches>,
     global_stats: Arc<RwLock<stats::ChartStats>>,
     rng: &mut R,
+    xray_maps: (XRayMap, XRayMap),
 ) {
     let search_method = cmd_opt.search_method;
     let mut executor = Executor::new(
@@ -22,6 +23,7 @@ pub fn fuzz_loop<R: Rng + ?Sized>(
         global_branches,
         depot.clone(),
         global_stats.clone(),
+        xray_maps,
     );
 
     while running.load(Ordering::Relaxed) {
@@ -68,9 +70,11 @@ pub fn fuzz_loop<R: Rng + ?Sized>(
 
         {
             let fuzz_type = cond.get_fuzz_type();
-            let handler = SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
             match fuzz_type {
                 FuzzType::ExploreFuzz => {
+                    let handler =
+                        SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
+
                     if handler.cond.is_time_expired() {
                         handler.cond.next_state();
                     }
@@ -96,6 +100,9 @@ pub fn fuzz_loop<R: Rng + ?Sized>(
                     }
                 },
                 FuzzType::ExploitFuzz => {
+                    let handler =
+                        SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
+
                     if handler.cond.state.is_one_byte() {
                         let mut fz = OneByteFuzz::new(handler);
                         fz.run();
@@ -105,12 +112,18 @@ pub fn fuzz_loop<R: Rng + ?Sized>(
                     }
                 },
                 FuzzType::AFLFuzz => {
+                    let handler =
+                        SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
                     AFLFuzz::new(handler).run(rng);
                 },
                 FuzzType::LenFuzz => {
+                    let handler =
+                        SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
                     LenFuzz::new(handler).run(rng);
                 },
                 FuzzType::CmpFnFuzz => {
+                    let handler =
+                        SearchHandler::new(running.clone(), &mut executor, &mut cond, buf);
                     FnFuzz::new(handler).run();
                 },
                 FuzzType::OtherFuzz => {

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ANGORA_WRAPPER="@Angora_WRAPPER_PATH@"
+SNAPSHOT_PLACEMENT_WRAPPER="@SnapshotPlacement_WRAPPER_PATH@"
+DFSAN_SNAPSHOT_WRAPPER="@DFSanSnapshot_WRAPPER_PATH@"
+XRAY_SNAPSHOT_WRAPPER="@XRaySnapshot_WRAPPER_PATH@"
+
+PYTHON="@Python3_EXECUTABLE@"
+
+if [[ $# < 1 ]]
+then
+    echo "Usage: $0 TARGET_NAME [FLAGS]... [SOURCES]..."
+    exit 1
+fi
+
+TARGET_NAME=$1
+shift
+
+USE_FAST=1 ${ANGORA_WRAPPER} -o "${TARGET_NAME}_angora_fast" $@
+USE_TRACK=1 ${ANGORA_WRAPPER} -o "${TARGET_NAME}_angora_track" $@
+${PYTHON} ${SNAPSHOT_PLACEMENT_WRAPPER} -o "${TARGET_NAME}_snapshot_placement" $@
+${PYTHON} ${DFSAN_SNAPSHOT_WRAPPER} -o "${TARGET_NAME}_dfsan_snapshot" $@
+${PYTHON} ${XRAY_SNAPSHOT_WRAPPER} -o "${TARGET_NAME}_xray_snapshot" $@

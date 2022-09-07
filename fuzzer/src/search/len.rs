@@ -1,6 +1,5 @@
 // Assume it is direct and linear
 use super::{config, SearchHandler};
-use crate::cond_stmt::CondOutput;
 use rand::prelude::*;
 
 pub struct LenFuzz<'a> {

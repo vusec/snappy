@@ -10,6 +10,7 @@ use std::{
 static TMP_DIR: &str = "tmp";
 static INPUT_FILE: &str = "cur_input";
 static FORKSRV_SOCKET_FILE: &str = "forksrv_socket";
+const DELAYED_FORKSRV_TMP_DIR: &str = "delayed_forksrv";
 static TRACK_FILE: &str = "track";
 static PIN_ROOT_VAR: &str = "PIN_ROOT";
 
@@ -39,9 +40,13 @@ pub struct CommandOpt {
     pub id: usize,
     pub main: (PathBuf, Vec<OsString>),
     pub track: (PathBuf, Vec<OsString>),
+    pub snapshot_placement_target: (PathBuf, Vec<OsString>),
+    pub dfsan_snapshot_target: (PathBuf, Vec<OsString>),
+    pub xray_snapshot_target: (PathBuf, Vec<OsString>),
     pub tmp_dir: PathBuf,
     pub out_file: PathBuf,
     pub forksrv_socket_path: PathBuf,
+    pub delayed_forksrv_tmp_dir: PathBuf,
     pub track_path: PathBuf,
     pub is_stdin: bool,
     pub search_method: search::SearchMethod,
@@ -52,12 +57,16 @@ pub struct CommandOpt {
     pub enable_afl: bool,
     pub enable_exploitation: bool,
     pub deterministic_seed: Option<u64>,
+    pub ignore_snapshot_threshold: bool,
 }
 
 impl CommandOpt {
     pub fn new(
         mode: &str,
         track_target: &str,
+        snapshot_placement_bin_path: &str,
+        dfsan_snapshot_bin_path: &str,
+        xray_snapshot_bin_path: &str,
         pargs: Vec<String>,
         out_dir: &Path,
         search_method: &str,
@@ -66,6 +75,7 @@ impl CommandOpt {
         enable_afl: bool,
         enable_exploitation: bool,
         deterministic_seed: Option<u64>,
+        ignore_snapshot_threshold: bool,
     ) -> Self {
         let mode = InstrumentationMode::from(mode);
 
@@ -74,6 +84,7 @@ impl CommandOpt {
 
         let out_file = tmp_dir.join(INPUT_FILE);
         let forksrv_socket_path = tmp_dir.join(FORKSRV_SOCKET_FILE);
+        let delayed_forksrv_tmp_dir = tmp_dir.join(DELAYED_FORKSRV_TMP_DIR);
 
         let track_path = tmp_dir.join(TRACK_FILE);
 
@@ -120,9 +131,16 @@ impl CommandOpt {
             id: 0,
             main: (main_bin.into(), main_args.clone()),
             track: (track_bin.into(), track_args),
+            snapshot_placement_target: (
+                snapshot_placement_bin_path.parse().unwrap(),
+                main_args.clone(),
+            ),
+            dfsan_snapshot_target: (dfsan_snapshot_bin_path.parse().unwrap(), main_args.clone()),
+            xray_snapshot_target: (xray_snapshot_bin_path.parse().unwrap(), main_args.clone()),
             tmp_dir,
             out_file,
             forksrv_socket_path,
+            delayed_forksrv_tmp_dir,
             track_path,
             is_stdin: !has_input_arg,
             search_method: search::parse_search_method(search_method),
@@ -133,6 +151,7 @@ impl CommandOpt {
             enable_afl,
             enable_exploitation,
             deterministic_seed,
+            ignore_snapshot_threshold,
         }
     }
 
@@ -140,6 +159,9 @@ impl CommandOpt {
         let mut cmd_opt = self.clone();
         let new_file = self.tmp_dir.join(format!("{}_{}", INPUT_FILE, id));
         let new_forksrv_socket_path = self.tmp_dir.join(format!("{}_{}", FORKSRV_SOCKET_FILE, id));
+        let new_delayed_forksrv_tmp_dir = self
+            .tmp_dir
+            .join(format!("{}_{}", DELAYED_FORKSRV_TMP_DIR, id));
         let new_track_path = self.tmp_dir.join(format!("{}_{}", TRACK_FILE, id));
         if !self.is_stdin {
             for arg in &mut cmd_opt.main.1 {
@@ -152,10 +174,26 @@ impl CommandOpt {
                     *arg = new_file.clone().into_os_string();
                 }
             }
+            for arg in &mut cmd_opt.snapshot_placement_target.1 {
+                if arg == "@@" {
+                    *arg = new_file.clone().into_os_string();
+                }
+            }
+            for arg in &mut cmd_opt.dfsan_snapshot_target.1 {
+                if arg == "@@" {
+                    *arg = new_file.clone().into_os_string();
+                }
+            }
+            for arg in &mut cmd_opt.xray_snapshot_target.1 {
+                if arg == "@@" {
+                    *arg = new_file.clone().into_os_string();
+                }
+            }
         }
         cmd_opt.id = id;
         cmd_opt.out_file = new_file.to_owned();
         cmd_opt.forksrv_socket_path = new_forksrv_socket_path;
+        cmd_opt.delayed_forksrv_tmp_dir = new_delayed_forksrv_tmp_dir;
         cmd_opt.track_path = new_track_path;
         cmd_opt.is_raw = false;
         cmd_opt

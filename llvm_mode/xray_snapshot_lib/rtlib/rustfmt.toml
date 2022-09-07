@@ -1,0 +1,3 @@
+combine_control_expr = true
+imports_granularity = "Crate"
+match_block_trailing_comma = false

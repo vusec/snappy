@@ -30,8 +30,12 @@ file(
   INPUT "${CMAKE_CURRENT_BINARY_DIR}/install_locations.h.gen")
 
 add_executable(AngoraClang angora_clang.c)
-target_include_directories(AngoraClang PRIVATE ${PROJECT_SOURCE_DIR}/include
-                                               ${CMAKE_CURRENT_BINARY_DIR})
+message(${PROJECT_SOURCE_DIR}/runtime_fast/include)
+target_include_directories(
+  AngoraClang
+  PRIVATE ${PROJECT_SOURCE_DIR}/include
+          ${PROJECT_SOURCE_DIR}/runtime_fast/include
+          ${CMAKE_CURRENT_BINARY_DIR})
 set_target_properties(AngoraClang PROPERTIES OUTPUT_NAME "angora-clang")
 
 add_custom_command(
@@ -75,8 +79,10 @@ if(BUILD_TESTING)
   add_executable(AngoraClangTest angora_clang.c)
   target_compile_definitions(AngoraClangTest PRIVATE TEST_BUILD)
   target_include_directories(
-    AngoraClangTest PRIVATE ${PROJECT_SOURCE_DIR}/include
-                            ${CMAKE_CURRENT_BINARY_DIR})
+    AngoraClangTest
+    PRIVATE ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/runtime_fast/include
+            ${CMAKE_CURRENT_BINARY_DIR})
   set_target_properties(AngoraClangTest PROPERTIES OUTPUT_NAME
                                                    "angora-clang-test")
 

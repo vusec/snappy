@@ -1,4 +1,3 @@
-use super::CondOutput;
 use crate::cond_stmt;
 use angora_common::{cond_stmt_base::CondStmtBase, defs, shm};
 use std;

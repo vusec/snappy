@@ -4,9 +4,6 @@ version = "1.2.2"
 authors = ["spinpx <spinpx@gmail.com>"]
 edition = "2018"
 
-[features]
-unstable = []
-
 [dependencies]
 clap = "2.32"
 log = "0.4"
@@ -24,16 +21,33 @@ derive_more = "0.99"
 colored = "2.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# lazy_static = "1.1"
 memmap = "0.7.0"
 twoway = "0.2.0"
+yaml-rust = "0.4.5"
 anyhow = "1.0.38"
 bitflags = "1.2.1"
 sprs = "0.10.0"
+hdrhistogram = "7.3.0"
+indicatif = "0.16.2"
+csv = "1.1.6"
 
 angora_common = {path = "../common" }
 
 [dev-dependencies]
+criterion = "0.3"
+tempfile = "3.2.0"
+
+[[bench]]
+name = "delayed_forksrv"
+harness = false
+bench = false
+
+[[bench]]
+name = "trace_handling"
+harness = false
+
+[profile.bench]
+debug = true
 
 [profile.release]
 debug = true

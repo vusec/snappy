@@ -24,6 +24,7 @@
 #include "alloc_inl.h"
 #include "defs.h"
 #include "debug.h"
+#include "runtime_fast.h"
 
 #if defined(TEST_BUILD)
 #include "build_locations.h"
@@ -98,12 +99,12 @@ static u8 check_if_assembler(u32 argc, char **argv) {
 }
 
 static void add_angora_pass(size_t* cc_par_cnt, char* cc_params[*cc_par_cnt], struct config* config) {
-  if (config->clang_type != CLANG_DFSAN_TYPE) {
-    cc_params[(*cc_par_cnt)++] = "-Xclang";
-    cc_params[(*cc_par_cnt)++] = "-load";
-    cc_params[(*cc_par_cnt)++] = "-Xclang";
-    cc_params[(*cc_par_cnt)++] = UNFOLD_BRANCH_PASS_PATH;
-  }
+  // if (config->clang_type != CLANG_DFSAN_TYPE) {
+  //   cc_params[(*cc_par_cnt)++] = "-Xclang";
+  //   cc_params[(*cc_par_cnt)++] = "-load";
+  //   cc_params[(*cc_par_cnt)++] = "-Xclang";
+  //   cc_params[(*cc_par_cnt)++] = UNFOLD_BRANCH_PASS_PATH;
+  // }
 
   cc_params[(*cc_par_cnt)++] = "-Xclang";
   cc_params[(*cc_par_cnt)++] = "-load";
@@ -142,10 +143,31 @@ static void add_angora_pass(size_t* cc_par_cnt, char* cc_params[*cc_par_cnt], st
 static void add_angora_runtime(size_t *cc_par_cnt, char *cc_params[*cc_par_cnt],
                                struct config *config) {
   if (config->clang_type == CLANG_FAST_TYPE) {
-    cc_params[(*cc_par_cnt)++] = alloc_printf("%s", FAST_RTLIB_PATH);
+    cc_params[(*cc_par_cnt)++] = alloc_printf(
+        "-Wl,--whole-archive,%s,--no-whole-archive", FAST_RTLIB_PATH);
     cc_params[(*cc_par_cnt)++] = "-lpthread";
     cc_params[(*cc_par_cnt)++] = "-ldl";
     cc_params[(*cc_par_cnt)++] = "-lm";
+
+    char *linker_wrap_opt = alloc_printf("-Wl,");
+    size_t linker_wrap_opt_size = strlen(linker_wrap_opt) + 1;
+
+    size_t symbols_num = sizeof(runtime_fast_wrapped_symbols) /
+                         sizeof(runtime_fast_wrapped_symbols[0]);
+    for (size_t idx = 0; idx < symbols_num; idx++) {
+      char *new_wrap =
+          alloc_printf("--wrap=%s,", runtime_fast_wrapped_symbols[idx]);
+      linker_wrap_opt_size += strlen(new_wrap);
+
+      linker_wrap_opt = ck_realloc(linker_wrap_opt, linker_wrap_opt_size);
+      strcat(linker_wrap_opt, new_wrap);
+      ck_free(new_wrap);
+    }
+
+    // Remove trailing comma
+    linker_wrap_opt[strlen(linker_wrap_opt) - 1] = '\0';
+
+    cc_params[(*cc_par_cnt)++] = linker_wrap_opt;
   } else if (config->clang_type == CLANG_TRACK_TYPE ||
              config->clang_type == CLANG_DFSAN_TYPE) {
     cc_params[(*cc_par_cnt)++] = alloc_printf("%s", TRACK_RTLIB_PATH);

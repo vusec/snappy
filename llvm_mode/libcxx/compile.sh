@@ -58,15 +58,23 @@ cd $CUR_DIR
 rm -rf build_*
 
 mkdir build_fast && cd build_fast/
-CC=clang CXX=clang++ cmake -G Ninja ../llvm_src  -DLIBCXXABI_ENABLE_SHARED=NO -DLIBCXX_ENABLE_SHARED=NO -DLIBCXX_CXX_ABI=libcxxabi 
-#-DLLVM_FORCE_USE_OLD_TOOLCHAIN=YES 
+cmake -G Ninja ../llvm_src \
+    -DCMAKE_C_COMPILER=clang \
+    -DCMAKE_CXX_COMPILER=clang++ \
+    -DLIBCXXABI_ENABLE_SHARED=NO \
+    -DLIBCXX_ENABLE_SHARED=NO \
+    -DLIBCXX_CXX_ABI=libcxxabi
 ninja cxx cxxabi
 
 cd ..
 mkdir build_track && cd build_track/
 
-CC=${ROOT_DIR}/bin/angora-clang CXX=${ROOT_DIR}/bin/angora-clang++ cmake -G Ninja ../llvm_src  -DLIBCXXABI_ENABLE_SHARED=NO -DLIBCXX_ENABLE_SHARED=NO -DLIBCXX_CXX_ABI=libcxxabi 
-#-DLLVM_FORCE_USE_OLD_TOOLCHAIN=YES 
+cmake -G Ninja ../llvm_src \
+    -DCMAKE_C_COMPILER=${ROOT_DIR}/bin/angora-clang \
+    -DCMAKE_CXX_COMPILER=${ROOT_DIR}/bin/angora-clang++ \
+    -DLIBCXXABI_ENABLE_SHARED=NO \
+    -DLIBCXX_ENABLE_SHARED=NO \
+    -DLIBCXX_CXX_ABI=libcxxabi
 USE_DFSAN=1 ninja cxx cxxabi
 
 # @echo "if cxxabi.h not found, try: cp ./libcxxabi/include/*  ./libcxx/include, or -I"

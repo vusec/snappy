@@ -22,6 +22,17 @@ impl FuzzType {
     pub fn index(&self) -> usize {
         *self as usize
     }
+
+    pub fn modifies_tainted_only(self) -> bool {
+        match self {
+            FuzzType::ExploreFuzz => true,
+            FuzzType::ExploitFuzz => true,
+            FuzzType::CmpFnFuzz => false,
+            FuzzType::LenFuzz => false,
+            FuzzType::AFLFuzz => false,
+            FuzzType::OtherFuzz => false,
+        }
+    }
 }
 
 pub fn get_fuzz_type_name(i: usize) -> String {

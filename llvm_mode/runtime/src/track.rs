@@ -5,6 +5,7 @@ use ctor::ctor;
 use lazy_static::lazy_static;
 use libc;
 use std::{slice, sync::Mutex};
+use backtrace::Backtrace;
 
 // use shm_conds;
 lazy_static! {
@@ -69,6 +70,7 @@ pub extern "C" fn __dfsw___angora_trace_cmp_tt(
         log::trace!("Condition not tainted, ignoring.");
         return;
     }
+    log::trace!("Backtrace:\n{:?}", Backtrace::new());
 
     let op = infer_eq_sign(op, lb1, lb2);
     infer_shape(lb1, size);
@@ -115,6 +117,7 @@ pub unsafe extern "C" fn __dfsw___angora_trace_switch_tt(
         log::trace!("Switch not tainted, ignoring.");
         return;
     }
+    log::trace!("Backtrace:\n{:?}", Backtrace::new());
 
     infer_shape(lb, size);
 
@@ -187,6 +190,7 @@ pub unsafe extern "C" fn __dfsw___angora_trace_fn_tt(
         log::trace!("Compare function not tainted, ignoring.");
         return;
     }
+    log::trace!("Backtrace:\n{:?}", Backtrace::new());
 
     let arg1 = slice::from_raw_parts(parg1 as *mut u8, arglen1).to_vec();
     let arg2 = slice::from_raw_parts(parg2 as *mut u8, arglen2).to_vec();
@@ -249,6 +253,7 @@ pub extern "C" fn __dfsw___angora_trace_exploit_val_tt(
         log::trace!("Exploit target not tainted by input, ignoring.");
         return;
     }
+    log::trace!("Backtrace:\n{:?}", Backtrace::new());
 
     log_cmp(cmpid, context, defs::COND_FALSE_ST, op, size, lb, 0, val, 0);
 }
