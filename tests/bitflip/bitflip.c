@@ -50,5 +50,7 @@ int main (int argc, char** argv) {
     abort();
   }
 
+  puts("Normal execution");
+
   return 0;
 }

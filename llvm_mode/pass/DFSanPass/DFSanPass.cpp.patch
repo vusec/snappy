@@ -1,0 +1,371 @@
+diff --git a/llvm_mode/pass/DFSanPass/DFSanPass.cpp b/llvm_mode/pass/DFSanPass/DFSanPass.cpp
+index da43365..7345f6c 100644
+--- a/llvm_mode/pass/DFSanPass/DFSanPass.cpp
++++ b/llvm_mode/pass/DFSanPass/DFSanPass.cpp
+@@ -76,6 +76,7 @@
+ #include "llvm/IR/Instructions.h"
+ #include "llvm/IR/IntrinsicInst.h"
+ #include "llvm/IR/LLVMContext.h"
++#include "llvm/IR/LegacyPassManager.h"
+ #include "llvm/IR/MDBuilder.h"
+ #include "llvm/IR/Module.h"
+ #include "llvm/IR/Type.h"
+@@ -88,6 +89,7 @@
+ #include "llvm/Support/ErrorHandling.h"
+ #include "llvm/Support/SpecialCaseList.h"
+ #include "llvm/Support/VirtualFileSystem.h"
++#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+ #include "llvm/Transforms/Instrumentation.h"
+ #include "llvm/Transforms/Utils/BasicBlockUtils.h"
+ #include "llvm/Transforms/Utils/Local.h"
+@@ -116,7 +118,7 @@ static const char *const kDFSanExternShadowPtrMask = "__dfsan_shadow_ptr_mask";
+ // we have unfortunately encountered too much code (including Clang itself;
+ // see PR14291) which performs misaligned access.
+ static cl::opt<bool> ClPreserveAlignment(
+-    "dfsan-preserve-alignment",
++    "angora-dfsan-preserve-alignment",
+     cl::desc("respect alignment requirements provided by input IR"), cl::Hidden,
+     cl::init(false));
+ 
+@@ -128,21 +130,21 @@ static cl::opt<bool> ClPreserveAlignment(
+ // unknown.  The other supported annotations are "functional" and "discard",
+ // which are described below under DataFlowSanitizer::WrapperKind.
+ static cl::list<std::string> ClABIListFiles(
+-    "dfsan-abilist",
++    "angora-dfsan-abilist2",
+     cl::desc("File listing native ABI functions and how the pass treats them"),
+     cl::Hidden);
+ 
+ // Controls whether the pass uses IA_Args or IA_TLS as the ABI for instrumented
+ // functions (see DataFlowSanitizer::InstrumentedABI below).
+ static cl::opt<bool>
+-    ClArgsABI("dfsan-args-abi",
++    ClArgsABI("angora-dfsan-args-abi",
+               cl::desc("Use the argument ABI rather than the TLS ABI"),
+               cl::Hidden);
+ 
+ // Controls whether the pass includes or ignores the labels of pointers in load
+ // instructions.
+ static cl::opt<bool> ClCombinePointerLabelsOnLoad(
+-    "dfsan-combine-pointer-labels-on-load",
++    "angora-dfsan-combine-pointer-labels-on-load",
+     cl::desc("Combine the label of the pointer with the label of the data when "
+              "loading from memory."),
+     cl::Hidden, cl::init(true));
+@@ -150,13 +152,13 @@ static cl::opt<bool> ClCombinePointerLabelsOnLoad(
+ // Controls whether the pass includes or ignores the labels of pointers in
+ // stores instructions.
+ static cl::opt<bool> ClCombinePointerLabelsOnStore(
+-    "dfsan-combine-pointer-labels-on-store",
++    "angora-dfsan-combine-pointer-labels-on-store",
+     cl::desc("Combine the label of the pointer with the label of the data when "
+              "storing in memory."),
+     cl::Hidden, cl::init(false));
+ 
+ static cl::opt<bool> ClDebugNonzeroLabels(
+-    "dfsan-debug-nonzero-labels",
++    "angora-dfsan-debug-nonzero-labels",
+     cl::desc("Insert calls to __dfsan_nonzero_label on observing a parameter, "
+              "load or return with a nonzero label"),
+     cl::Hidden);
+@@ -172,7 +174,7 @@ static cl::opt<bool> ClDebugNonzeroLabels(
+ //   void __dfsan_mem_transfer_callback(dfsan_label *Start, size_t Len);
+ //   void __dfsan_cmp_callback(dfsan_label CombinedLabel);
+ static cl::opt<bool> ClEventCallbacks(
+-    "dfsan-event-callbacks",
++    "angora-dfsan-event-callbacks",
+     cl::desc("Insert calls to __dfsan_*_callback functions on data events."),
+     cl::Hidden, cl::init(false));
+ 
+@@ -293,7 +295,7 @@ class DataFlowSanitizer : public ModulePass {
+   friend struct DFSanFunction;
+   friend class DFSanVisitor;
+ 
+-  enum { ShadowWidthBits = 16, ShadowWidthBytes = ShadowWidthBits / 8 };
++  enum { ShadowWidthBits = 32, ShadowWidthBytes = ShadowWidthBits / 8 };
+ 
+   /// Which ABI should be used for instrumented functions?
+   enum InstrumentedABI {
+@@ -354,6 +356,9 @@ class DataFlowSanitizer : public ModulePass {
+   FunctionType *DFSanSetLabelFnTy;
+   FunctionType *DFSanNonzeroLabelFnTy;
+   FunctionType *DFSanVarargWrapperFnTy;
++  FunctionType *DFSanMarkSignedFnTy;
++  FunctionType *DFSanCombineAndFnTy;
++  FunctionType *DFSanInferShapeFnTy;
+   FunctionType *DFSanLoadStoreCmpCallbackFnTy;
+   FunctionType *DFSanMemTransferCallbackFnTy;
+   FunctionCallee DFSanUnionFn;
+@@ -363,6 +368,9 @@ class DataFlowSanitizer : public ModulePass {
+   FunctionCallee DFSanSetLabelFn;
+   FunctionCallee DFSanNonzeroLabelFn;
+   FunctionCallee DFSanVarargWrapperFn;
++  FunctionCallee DFSanMarkSignedFn;
++  FunctionCallee DFSanCombineAndFn;
++  FunctionCallee DFSanInferShapeFn;
+   FunctionCallee DFSanLoadCallbackFn;
+   FunctionCallee DFSanStoreCallbackFn;
+   FunctionCallee DFSanMemTransferCallbackFn;
+@@ -437,6 +445,11 @@ struct DFSanFunction {
+   Value *getRetvalTLS();
+   Value *getShadow(Value *V);
+   void setShadow(Instruction *I, Value *Shadow);
++  void markSignedShadows(Value *V1, Value *V2, Instruction *Pos);
++  void markSignedShadow(Value *Value, Instruction *Pos);
++  void markSignedOperandShadows(BinaryOperator &BO);
++  void combineAndInstShadows(BinaryOperator &BO);
++  void inferOperandShapes(BinaryOperator &BO);
+   Value *combineShadows(Value *V1, Value *V2, Instruction *Pos);
+   Value *combineOperandShadows(Instruction *Inst);
+   Value *loadShadow(Value *ShadowAddr, uint64_t Size, uint64_t Align,
+@@ -478,15 +491,13 @@ public:
+   void visitSelectInst(SelectInst &I);
+   void visitMemSetInst(MemSetInst &I);
+   void visitMemTransferInst(MemTransferInst &I);
++  void visitSExtInst(SExtInst &I);
+ };
+ 
+ } // end anonymous namespace
+ 
+ char DataFlowSanitizer::ID;
+ 
+-INITIALIZE_PASS(DataFlowSanitizer, "dfsan",
+-                "DataFlowSanitizer: dynamic data flow analysis.", false, false)
+-
+ ModulePass *
+ llvm::createDataFlowSanitizerPass(const std::vector<std::string> &ABIListFiles,
+                                   void *(*getArgTLS)(),
+@@ -604,6 +615,14 @@ bool DataFlowSanitizer::doInitialization(Module &M) {
+       FunctionType::get(Type::getVoidTy(*Ctx), None, /*isVarArg=*/false);
+   DFSanVarargWrapperFnTy = FunctionType::get(
+       Type::getVoidTy(*Ctx), Type::getInt8PtrTy(*Ctx), /*isVarArg=*/false);
++  Type *DFSanMarkSignedArgs[2] = {ShadowTy, ShadowTy};
++  DFSanMarkSignedFnTy =
++      FunctionType::get(ShadowTy, DFSanMarkSignedArgs, /*isVarArg=*/false);
++  DFSanCombineAndFnTy =
++      FunctionType::get(Type::getVoidTy(*Ctx), ShadowTy, /*isVarArg=*/false);
++  Type *DFSanInferShapeArgs[3] = {ShadowTy, ShadowTy, Type::getInt32Ty(*Ctx)};
++  DFSanInferShapeFnTy = FunctionType::get(
++      Type::getVoidTy(*Ctx), DFSanInferShapeArgs, /*isVarArg=*/false);
+   DFSanLoadStoreCmpCallbackFnTy =
+       FunctionType::get(Type::getVoidTy(*Ctx), ShadowTy, /*isVarArg=*/false);
+   Type *DFSanMemTransferCallbackArgs[2] = {ShadowPtrTy, IntptrTy};
+@@ -793,6 +812,41 @@ void DataFlowSanitizer::initializeRuntimeFunctions(Module &M) {
+       Mod->getOrInsertFunction("__dfsan_nonzero_label", DFSanNonzeroLabelFnTy);
+   DFSanVarargWrapperFn = Mod->getOrInsertFunction("__dfsan_vararg_wrapper",
+                                                   DFSanVarargWrapperFnTy);
++  {
++    AttributeList AL;
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::NoUnwind);
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::ReadNone);
++    AL = AL.addAttribute(M.getContext(), AttributeList::ReturnIndex,
++                         Attribute::ZExt);
++    AL = AL.addParamAttribute(M.getContext(), 0, Attribute::ZExt);
++    AL = AL.addParamAttribute(M.getContext(), 1, Attribute::ZExt);
++    DFSanMarkSignedFn =
++        Mod->getOrInsertFunction("dfsan_mark_signed", DFSanMarkSignedFnTy, AL);
++  }
++  {
++    AttributeList AL;
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::NoUnwind);
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::ReadNone);
++    AL = AL.addParamAttribute(M.getContext(), 0, Attribute::ZExt);
++    DFSanCombineAndFn = Mod->getOrInsertFunction("dfsan_combine_and_ins",
++                                                 DFSanCombineAndFnTy, AL);
++  }
++  {
++    AttributeList AL;
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::NoUnwind);
++    AL = AL.addAttribute(M.getContext(), AttributeList::FunctionIndex,
++                         Attribute::ReadNone);
++    AL = AL.addParamAttribute(M.getContext(), 0, Attribute::ZExt);
++    AL = AL.addParamAttribute(M.getContext(), 1, Attribute::ZExt);
++    AL = AL.addParamAttribute(M.getContext(), 2, Attribute::ZExt);
++    DFSanInferShapeFn = Mod->getOrInsertFunction("dfsan_infer_shape_in_math_op",
++                                                 DFSanInferShapeFnTy, AL);
++  }
+ }
+ 
+ // Initializes event callback functions and declare them in the module
+@@ -852,7 +906,10 @@ bool DataFlowSanitizer::runOnModule(Module &M) {
+         &i != DFSanLoadCallbackFn.getCallee()->stripPointerCasts() &&
+         &i != DFSanStoreCallbackFn.getCallee()->stripPointerCasts() &&
+         &i != DFSanMemTransferCallbackFn.getCallee()->stripPointerCasts() &&
+-        &i != DFSanCmpCallbackFn.getCallee()->stripPointerCasts())
++        &i != DFSanCmpCallbackFn.getCallee()->stripPointerCasts() &&
++        &i != DFSanMarkSignedFn.getCallee()->stripPointerCasts() &&
++        &i != DFSanCombineAndFn.getCallee()->stripPointerCasts() &&
++        &i != DFSanInferShapeFn.getCallee()->stripPointerCasts())
+       FnsToInstrument.push_back(&i);
+   }
+ 
+@@ -1141,6 +1198,110 @@ Value *DataFlowSanitizer::getShadowAddress(Value *Addr, Instruction *Pos) {
+       ShadowPtrTy);
+ }
+ 
++void DFSanFunction::combineAndInstShadows(BinaryOperator &BO) {
++  assert(BO.getOpcode() == Instruction::BinaryOps::And);
++
++  Value *Arg1 = BO.getOperand(0);
++  Value *Arg2 = BO.getOperand(1);
++
++  if (Arg1->getType()->isIntegerTy() && Arg2->getType()->isIntegerTy()) {
++    Value *Arg1Shadow = getShadow(Arg1);
++    Value *Arg2Shadow = getShadow(Arg2);
++
++    IRBuilder<> IRB(&BO);
++    if (isa<ConstantInt>(Arg1) && Arg2Shadow != DFS.ZeroShadow) { // Constant
++      CallInst *Call = IRB.CreateCall(DFS.DFSanCombineAndFn, {Arg2Shadow});
++      Call->addParamAttr(0, Attribute::ZExt);
++    } else if (isa<ConstantInt>(Arg2) && Arg1Shadow != DFS.ZeroShadow) {
++      CallInst *Call = IRB.CreateCall(DFS.DFSanCombineAndFn, {Arg1Shadow});
++      Call->addParamAttr(0, Attribute::ZExt);
++    }
++  }
++}
++
++// TODO: Merge this with markSignedShadow when refactoring `dfsan_mark_signed`
++void DFSanFunction::markSignedShadows(Value *V1, Value *V2, Instruction *Pos) {
++  IRBuilder<> IRB(Pos);
++  Value *V1Shadow = getShadow(V1);
++  Value *V2Shadow = getShadow(V2);
++  CallInst *Call = IRB.CreateCall(DFS.DFSanMarkSignedFn, {V1Shadow, V2Shadow});
++  Call->addAttribute(AttributeList::ReturnIndex, Attribute::ZExt);
++  Call->addParamAttr(0, Attribute::ZExt);
++  Call->addParamAttr(1, Attribute::ZExt);
++}
++
++void DFSanFunction::markSignedShadow(Value *V, Instruction *Pos) {
++  IRBuilder<> IRB(Pos);
++  Value *Shadow = getShadow(V);
++  CallInst *Call =
++      IRB.CreateCall(DFS.DFSanMarkSignedFn, {Shadow, DFS.ZeroShadow});
++  Call->addAttribute(AttributeList::ReturnIndex, Attribute::ZExt);
++  Call->addParamAttr(0, Attribute::ZExt);
++  Call->addParamAttr(1, Attribute::ZExt);
++}
++
++void DFSanFunction::markSignedOperandShadows(BinaryOperator &BO) {
++  // https://stackoverflow.com/questions/30519005/how-to-distinguish-signed-and-unsigned-integer-in-llvm
++  // http://nondot.org/sabre/LLVMNotes/TypeSystemChanges.txt
++  switch (BO.getOpcode()) {
++  case Instruction::SDiv:
++  case Instruction::SRem:
++  case Instruction::AShr:
++    markSignedShadows(BO.getOperand(0), BO.getOperand(1), &BO);
++    break;
++  default:
++    // LangOptions::SOB_Undefined && bits < 32(i16 will be optimization to
++    // remove usw) see
++    // https://github.com/llvm-mirror/clang/blob/release_40/lib/CodeGen/CGExprScalar.cpp
++    // detect nsw attribute: which the most important thing to mark signed
++    // integer.
++    if (OverflowingBinaryOperator *op =
++            dyn_cast<OverflowingBinaryOperator>(&BO)) {
++      if (op->hasNoSignedWrap() && !op->hasNoUnsignedWrap())
++        markSignedShadows(BO.getOperand(0), BO.getOperand(1), &BO);
++    } else if (CmpInst *op = dyn_cast<CmpInst>(&BO)) {
++      if (op->isSigned())
++        markSignedShadows(BO.getOperand(0), BO.getOperand(1), &BO);
++    }
++    break;
++  }
++}
++
++void DFSanFunction::inferOperandShapes(BinaryOperator &BO) {
++  switch (BO.getOpcode()) {
++  case Instruction::Add:
++  case Instruction::Sub:
++  case Instruction::Mul:
++  case Instruction::UDiv:
++  case Instruction::SDiv:
++  case Instruction::SRem: {
++    // case Instruction::Shl:
++    // case Instruction::AShr:
++    // case Instruction::LShr:
++    IRBuilder<> IRB(&BO);
++    Value *Arg1 = BO.getOperand(0);
++    Value *Arg2 = BO.getOperand(1);
++    Value *Arg1Shadow = getShadow(Arg1);
++    Value *Arg2Shadow = getShadow(Arg2);
++
++    int num_bits = Arg1->getType()->getScalarSizeInBits();
++    int num_bytes = num_bits / 8;
++    if (num_bytes > 0 && num_bits % 8 == 0) {
++      Value *SizeArg = ConstantInt::get(DFS.ShadowTy, num_bytes);
++      CallInst *Call = IRB.CreateCall(DFS.DFSanInferShapeFn,
++                                      {Arg1Shadow, Arg2Shadow, SizeArg});
++      Call->addParamAttr(0, Attribute::ZExt);
++      Call->addParamAttr(1, Attribute::ZExt);
++      Call->addParamAttr(2, Attribute::ZExt);
++    }
++    break;
++  }
++  default:
++    // Do nothing for other binary operators.
++    break;
++  }
++}
++
+ // Generates IR to compute the union of the two given shadows, inserting it
+ // before Pos.  Returns the computed union Value.
+ Value *DFSanFunction::combineShadows(Value *V1, Value *V2, Instruction *Pos) {
+@@ -1278,14 +1439,6 @@ Value *DFSanFunction::loadShadow(Value *Addr, uint64_t Size, uint64_t Align,
+     LI->setAlignment(ShadowAlign);
+     return LI;
+   }
+-  case 2: {
+-    IRBuilder<> IRB(Pos);
+-    Value *ShadowAddr1 = IRB.CreateGEP(DFS.ShadowTy, ShadowAddr,
+-                                       ConstantInt::get(DFS.IntptrTy, 1));
+-    return combineShadows(
+-        IRB.CreateAlignedLoad(DFS.ShadowTy, ShadowAddr, ShadowAlign),
+-        IRB.CreateAlignedLoad(DFS.ShadowTy, ShadowAddr1, ShadowAlign), Pos);
+-  }
+   }
+   if (!AvoidNewBlocks && Size % (64 / DFS.ShadowWidthBits) == 0) {
+     // Fast path for the common case where each byte has identical shadow: load
+@@ -1462,9 +1615,18 @@ void DFSanVisitor::visitUnaryOperator(UnaryOperator &UO) {
+ }
+ 
+ void DFSanVisitor::visitBinaryOperator(BinaryOperator &BO) {
++  if (BO.getOpcode() == Instruction::BinaryOps::And) {
++    DFSF.combineAndInstShadows(BO);
++  }
++  DFSF.markSignedOperandShadows(BO);
++  DFSF.inferOperandShapes(BO);
+   visitOperandShadowInst(BO);
+ }
+ 
++void DFSanVisitor::visitSExtInst(SExtInst &I) {
++  DFSF.markSignedShadow(I.getOperand(0), &I);
++}
++
+ void DFSanVisitor::visitCastInst(CastInst &CI) { visitOperandShadowInst(CI); }
+ 
+ void DFSanVisitor::visitCmpInst(CmpInst &CI) {
+@@ -1841,3 +2003,18 @@ void DFSanVisitor::visitPHINode(PHINode &PN) {
+   DFSF.PHIFixups.push_back(std::make_pair(&PN, ShadowPN));
+   DFSF.setShadow(&PN, ShadowPN);
+ }
++
++static RegisterPass<DataFlowSanitizer> RegisterAngoraDFSanPass("angora-dfsan",
++                                                               "Angora DFSan");
++
++static void registerAngoraDFSanPass(const PassManagerBuilder &,
++                                    legacy::PassManagerBase &PM) {
++  PM.add(new DataFlowSanitizer());
++}
++
++static RegisterStandardPasses
++    RegisterAngoraDFSanPassOptimizerLast(PassManagerBuilder::EP_OptimizerLast,
++                                         registerAngoraDFSanPass);
++
++static RegisterStandardPasses RegisterAngoraDFSanPassOnOptLevel0(
++    PassManagerBuilder::EP_EnabledOnOptLevel0, registerAngoraDFSanPass);
+\ No newline at end of file

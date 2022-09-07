@@ -1,5 +1,6 @@
 // Climb Hill.
-use super::*;
+use super::SearchHandler;
+use rand::prelude::*;
 
 pub struct CbhSearch<'a> {
     handler: SearchHandler<'a>,
@@ -10,7 +11,7 @@ impl<'a> CbhSearch<'a> {
         Self { handler }
     }
 
-    pub fn run(&mut self) {
+    pub fn run<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let mut input = self.handler.get_f_input();
         assert!(
             input.len() > 0,
@@ -34,7 +35,7 @@ impl<'a> CbhSearch<'a> {
                 break;
             }
             input.assign(&input_min);
-            input.randomize_all();
+            input.randomize_all(rng);
             let f0 = self.handler.execute_cond(&input);
             if f0 < fmin {
                 fmin = f0;

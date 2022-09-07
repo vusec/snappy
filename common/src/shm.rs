@@ -1,19 +1,92 @@
 use libc;
 use std::{
-    self,
+    self, io, mem,
     ops::{Deref, DerefMut},
 };
+
+const HUGE_PAGE_SIZE: usize = 2 * 1024 * 1024;
 
 // T must be fixed size
 pub struct SHM<T: Sized> {
     id: i32,
     size: usize,
     ptr: *mut T,
+    owned: bool,
 }
 
 impl<T> SHM<T> {
     pub fn new() -> Self {
-        let size = std::mem::size_of::<T>() as usize;
+        let (id, size) = match Self::allocate_with_normal_pages() {
+            Ok(map_info) => map_info,
+            Err(error) => panic!("Could not allocate shared memory: {}", error),
+        };
+
+        let ptr = unsafe { libc::shmat(id, std::ptr::null(), 0) };
+        if ptr == libc::MAP_FAILED {
+            let error = io::Error::last_os_error();
+            panic!("shmat(...): {}", error);
+        }
+        let ptr = ptr.cast();
+
+        SHM::<T> {
+            id,
+            size,
+            ptr,
+            owned: true,
+        }
+    }
+
+    pub fn new_huge() -> Self {
+        let (id, size) = match Self::allocate_with_huge_pages() {
+            Ok(map_info) => map_info,
+            Err(error) => {
+                log::warn!(
+                    "Using normal shared pages, shared huge pages could not be allocated: {}",
+                    error
+                );
+
+                match Self::allocate_with_normal_pages() {
+                    Ok(map_info) => map_info,
+                    Err(error) => panic!("Could not allocate shared memory: {}", error),
+                }
+            },
+        };
+
+        let ptr = unsafe { libc::shmat(id, std::ptr::null(), 0) };
+        if ptr == libc::MAP_FAILED {
+            let error = io::Error::last_os_error();
+            panic!("shmat(...): {}", error);
+        }
+        let ptr = ptr.cast();
+
+        SHM::<T> {
+            id,
+            size,
+            ptr,
+            owned: true,
+        }
+    }
+
+    fn allocate_with_huge_pages() -> io::Result<(i32, usize)> {
+        let size = (mem::size_of::<T>() / HUGE_PAGE_SIZE + 1) * HUGE_PAGE_SIZE;
+
+        let id = unsafe {
+            libc::shmget(
+                libc::IPC_PRIVATE,
+                size,
+                libc::IPC_CREAT | libc::IPC_EXCL | libc::SHM_HUGETLB | 0o600,
+            )
+        };
+        if id == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok((id, size))
+    }
+
+    fn allocate_with_normal_pages() -> io::Result<(i32, usize)> {
+        let size = mem::size_of::<T>();
+
         let id = unsafe {
             libc::shmget(
                 libc::IPC_PRIVATE,
@@ -21,19 +94,22 @@ impl<T> SHM<T> {
                 libc::IPC_CREAT | libc::IPC_EXCL | 0o600,
             )
         };
-        let ptr = unsafe { libc::shmat(id, std::ptr::null(), 0) as *mut T };
-
-        SHM::<T> {
-            id: id as i32,
-            size,
-            ptr,
+        if id == -1 {
+            return Err(io::Error::last_os_error());
         }
+
+        Ok((id, size))
     }
 
     pub fn from_id(id: i32) -> Self {
         let size = std::mem::size_of::<T>() as usize;
         let ptr = unsafe { libc::shmat(id as libc::c_int, std::ptr::null(), 0) as *mut T };
-        SHM::<T> { id, size, ptr }
+        SHM::<T> {
+            id,
+            size,
+            ptr,
+            owned: false,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -51,7 +127,6 @@ impl<T> SHM<T> {
     pub fn is_fail(&self) -> bool {
         -1 == self.ptr as isize
     }
-
 }
 
 impl<T> Deref for SHM<T> {
@@ -75,7 +150,15 @@ impl<T> std::fmt::Debug for SHM<T> {
 
 impl<T> Drop for SHM<T> {
     fn drop(&mut self) {
-        unsafe { libc::shmctl(self.id, libc::IPC_RMID, std::ptr::null_mut()) };
+        if !self.owned {
+            return;
+        }
+
+        let res = unsafe { libc::shmctl(self.id, libc::IPC_RMID, std::ptr::null_mut()) };
+        if res == -1 {
+            let error = io::Error::last_os_error();
+            panic!("shmctl(...): {}", error);
+        }
     }
 }
 

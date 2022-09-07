@@ -1,6 +1,7 @@
 // Magic bytes with random search
+use super::SearchHandler;
+use rand::prelude::*;
 
-use super::*;
 pub struct MbSearch<'a> {
     handler: SearchHandler<'a>,
 }
@@ -10,7 +11,7 @@ impl<'a> MbSearch<'a> {
         Self { handler }
     }
 
-    pub fn run(&mut self) {
+    pub fn run<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let mut input = self.handler.get_f_input();
         assert!(
             input.len() > 0,
@@ -29,7 +30,7 @@ impl<'a> MbSearch<'a> {
                 break;
             }
             input.assign(&orig_input_val);
-            input.randomize_all();
+            input.randomize_all(rng);
             self.handler.execute_cond(&input);
         }
     }

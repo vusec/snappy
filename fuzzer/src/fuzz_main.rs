@@ -1,6 +1,8 @@
 use crate::stats::*;
 use angora_common::defs;
 use chrono::prelude::Local;
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use std::{
     collections::HashMap,
     fs,
@@ -10,7 +12,8 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, RwLock,
     },
-    thread, time,
+    thread,
+    time::{self, Duration},
 };
 
 use crate::{bind_cpu, branches, check_dep, command, depot, executor, fuzz_loop, stats};
@@ -31,6 +34,7 @@ pub fn fuzz_main(
     sync_afl: bool,
     enable_afl: bool,
     enable_exploitation: bool,
+    deterministic_seed: Option<u64>,
 ) {
     pretty_env_logger::init();
 
@@ -42,16 +46,17 @@ pub fn fuzz_main(
         &angora_out_dir,
         search_method,
         mem_limit,
-        time_limit,
+        Duration::from_secs(time_limit),
         enable_afl,
         enable_exploitation,
+        deterministic_seed,
     );
-    info!("{:?}", command_option);
+    log::info!("{:#?}", command_option);
 
     check_dep::check_dep(in_dir, out_dir, &command_option);
 
     let depot = Arc::new(depot::Depot::new(seeds_dir, &angora_out_dir));
-    info!("{:?}", depot.dirs);
+    log::info!("{:#?}", depot.dirs);
 
     let stats = Arc::new(RwLock::new(stats::ChartStats::new()));
     let global_branches = Arc::new(branches::GlobalBranches::new());
@@ -59,6 +64,7 @@ pub fn fuzz_main(
     let running = Arc::new(AtomicBool::new(true));
     set_sigint_handler(running.clone());
 
+    log::trace!("Initializing sync executor");
     let mut executor = executor::Executor::new(
         command_option.specify(0),
         global_branches.clone(),
@@ -66,6 +72,7 @@ pub fn fuzz_main(
         stats.clone(),
     );
 
+    log::trace!("Processing seed test cases");
     depot::sync_depot(&mut executor, running.clone(), &depot.dirs.seeds_dir);
 
     if depot.empty() {
@@ -78,7 +85,7 @@ pub fn fuzz_main(
         panic!();
     }
 
-    let (handles, child_count) = init_cpus_and_run_fuzzing_threads(
+    let (handles, fuzz_thread_count) = init_cpus_and_run_fuzzing_threads(
         num_jobs,
         &running,
         &command_option,
@@ -92,7 +99,7 @@ pub fn fuzz_main(
         Err(e) => {
             error!("FATAL: Could not create log file: {:?}", e);
             panic!();
-        }
+        },
     };
     main_thread_sync_and_log(
         log_file,
@@ -103,7 +110,7 @@ pub fn fuzz_main(
         &depot,
         &global_branches,
         &stats,
-        child_count,
+        fuzz_thread_count,
     );
 
     for handle in handles {
@@ -127,7 +134,7 @@ fn initialize_directories(in_dir: &str, out_dir: &str, sync_afl: bool) -> (PathB
 
     let restart = in_dir == "-";
     if !restart {
-        fs::create_dir(&angora_out_dir).expect("Output directory has existed!");
+        fs::create_dir(&angora_out_dir).expect("Output directory already exists!");
     }
 
     let out_dir = &angora_out_dir;
@@ -147,7 +154,7 @@ fn gen_path_afl(out_dir: &str) -> PathBuf {
     let base_path = PathBuf::from(out_dir);
     let create_dir_result = fs::create_dir(&base_path);
     if create_dir_result.is_err() {
-        warn!("dir has existed. {:?}", base_path);
+        warn!("Shared output directory already exists: {:?}", base_path);
     }
     base_path.join(defs::ANGORA_DIR_NAME)
 }
@@ -169,7 +176,7 @@ fn create_stats_file_and_write_pid(angora_out_dir: &PathBuf) -> PathBuf {
         Err(e) => {
             error!("Could not create stats file: {:?}", e);
             panic!();
-        }
+        },
     };
     write!(buffer, "fuzzer_pid : {}", pid).expect("Could not write to stats file");
     fuzzer_stats
@@ -183,34 +190,57 @@ fn init_cpus_and_run_fuzzing_threads(
     depot: &Arc<depot::Depot>,
     stats: &Arc<RwLock<stats::ChartStats>>,
 ) -> (Vec<thread::JoinHandle<()>>, Arc<AtomicUsize>) {
-    let child_count = Arc::new(AtomicUsize::new(0));
-    let mut handlers = vec![];
     let free_cpus = bind_cpu::find_free_cpus(num_jobs);
-    let free_cpus_len = free_cpus.len();
-    let bind_cpus = if free_cpus_len < num_jobs {
-        warn!("The number of free cpus is less than the number of jobs. Will not bind any thread to any cpu.");
+    let bind_cpus = if free_cpus.len() < num_jobs {
+        log::warn!("The number of free cpus is less than the number of jobs. Will not bind any thread to any cpu.");
         false
     } else {
         true
     };
+
+    let fuzz_thread_count = Arc::new(AtomicUsize::new(0));
+    let mut fuzz_thread_handles = Vec::with_capacity(num_jobs);
     for thread_id in 0..num_jobs {
-        let c = child_count.clone();
-        let r = running.clone();
-        let cmd = command_option.specify(thread_id + 1);
-        let d = depot.clone();
-        let b = global_branches.clone();
-        let s = stats.clone();
+        let running = Arc::clone(&running);
+        let depot = Arc::clone(&depot);
+        let global_branches = Arc::clone(&global_branches);
+        let stats = Arc::clone(&stats);
+        let fuzz_thread_count = Arc::clone(&fuzz_thread_count);
+
+        let command_option = command_option.specify(thread_id + 1);
         let cid = if bind_cpus { free_cpus[thread_id] } else { 0 };
-        let handler = thread::spawn(move || {
-            c.fetch_add(1, Ordering::SeqCst);
+        let mut rng = if let Some(seed) = command_option.deterministic_seed {
+            let thread_seed = seed + thread_id as u64;
+            log::info!("Starting thread with seed: {}", thread_seed);
+            ChaCha8Rng::seed_from_u64(thread_seed)
+        } else {
+            log::info!("Starting thread with seed from entropy");
+            ChaCha8Rng::from_entropy()
+        };
+
+        let handle = thread::spawn(move || {
+            fuzz_thread_count.fetch_add(1, Ordering::SeqCst);
+
             if bind_cpus {
                 bind_cpu::bind_thread_to_cpu_core(cid);
             }
-            fuzz_loop::fuzz_loop(r, cmd, d, b, s);
+
+            fuzz_loop::fuzz_loop(
+                running,
+                command_option,
+                depot,
+                global_branches,
+                stats,
+                &mut rng,
+            );
+
+            fuzz_thread_count.fetch_sub(1, Ordering::SeqCst);
         });
-        handlers.push(handler);
+
+        fuzz_thread_handles.push(handle);
     }
-    (handlers, child_count)
+
+    (fuzz_thread_handles, fuzz_thread_count)
 }
 
 fn main_thread_sync_and_log(
@@ -222,7 +252,7 @@ fn main_thread_sync_and_log(
     depot: &Arc<depot::Depot>,
     global_branches: &Arc<branches::GlobalBranches>,
     stats: &Arc<RwLock<stats::ChartStats>>,
-    child_count: Arc<AtomicUsize>,
+    fuzz_thread_count: Arc<AtomicUsize>,
 ) {
     let mut last_explore_num = stats.read().unwrap().get_explore_num();
     let sync_dir = Path::new(out_dir);
@@ -231,7 +261,10 @@ fn main_thread_sync_and_log(
         depot::sync_afl(executor, running.clone(), sync_dir, &mut synced_ids);
     }
     let mut sync_counter = 1;
-    show_stats(&mut log_file, depot, global_branches, stats);
+
+    writeln!(log_file, "{}", stats.read().unwrap().mini_log_header())
+        .expect("Failed to write log file header");
+    show_and_log_stats(&mut log_file, depot, global_branches, stats);
     while running.load(Ordering::SeqCst) {
         thread::sleep(time::Duration::from_secs(5));
         sync_counter -= 1;
@@ -240,16 +273,17 @@ fn main_thread_sync_and_log(
             sync_counter = 12;
         }
 
-        show_stats(&mut log_file, depot, global_branches, stats);
-        if Arc::strong_count(&child_count) == 1 {
+        show_and_log_stats(&mut log_file, depot, global_branches, stats);
+
+        if fuzz_thread_count.load(Ordering::SeqCst) == 0 {
             let s = stats.read().unwrap();
             let cur_explore_num = s.get_explore_num();
             if cur_explore_num == 0 {
-                warn!("There is none constraint in the seeds, please ensure the inputs are vaild in the seed directory, or the program is ran correctly, or the read functions have been marked as source.");
+                log::warn!("No constraint could be found in the seeds! Please make sure that the seed test cases are valid, that the program is ran correctly and that the functions that read tainted data have been marked as taint sources.");
                 break;
             } else {
                 if cur_explore_num == last_explore_num {
-                    info!("Solve all constraints!!");
+                    log::info!("Solved all constraints!");
                     break;
                 }
                 last_explore_num = cur_explore_num;

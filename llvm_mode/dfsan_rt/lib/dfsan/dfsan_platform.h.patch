@@ -1,0 +1,11 @@
+--- /home/egeretto/builds/llvm-project/source/compiler-rt/lib/dfsan/dfsan_platform.h	2021-03-03 18:22:30.447608372 +0100
++++ dfsan_platform.h	2021-03-03 17:40:16.029608054 +0100
+@@ -20,7 +20,7 @@
+ #if defined(__x86_64__)
+ struct Mapping {
+   static const uptr kShadowAddr = 0x10000;
+-  static const uptr kUnionTableAddr = 0x200000000000;
++  static const uptr kUnionTableAddr = 0x400000000000;
+   static const uptr kAppAddr = 0x700000008000;
+   static const uptr kShadowMask = ~0x700000000000;
+ };

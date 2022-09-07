@@ -19,18 +19,17 @@ fn check_crash_handling() {
     f.read_to_string(&mut buffer).unwrap();
     // if buffer.trim() != "core" {
     if buffer.starts_with('|') {
-        panic!(CHECK_CRASH_MSG);
+        panic!("{}", CHECK_CRASH_MSG);
     }
 }
 
-fn check_target_binary(target: &str) {
-    let program_path = Path::new(target);
-    if !program_path.exists() || !program_path.is_file() {
-        panic!("Invalid executable file! {:?}", target);
+fn check_target_binary(program_path: impl AsRef<Path>) {
+    if !program_path.as_ref().exists() || !program_path.as_ref().is_file() {
+        panic!("Invalid executable file! {:?}", program_path.as_ref().display());
     }
 }
 
-fn mmap_file(target: &str) -> memmap::Mmap {
+fn mmap_file(target: impl AsRef<Path>) -> memmap::Mmap {
     let file = File::open(target).expect("Unable to open file");
     unsafe {
         memmap::MmapOptions::new()
@@ -48,17 +47,17 @@ pub fn check_asan(target: &str) -> bool {
     containt_string(&f_data, "libasan.so") || containt_string(&f_data, "__msan_init")
 }
 
-fn check_fast(target: &str) {
-    check_target_binary(target);
-    let f_data = mmap_file(target);
+fn check_fast(target: impl AsRef<Path>) {
+    check_target_binary(&target);
+    let f_data = mmap_file(&target);
     if !containt_string(&f_data, "__angora_cond_cmpid") {
         panic!("The program is not complied by Angora");
     }
 }
 
-fn check_track_llvm(target: &str) {
-    check_target_binary(target);
-    let f_data = mmap_file(target);
+fn check_track_llvm(target: impl AsRef<Path>) {
+    check_target_binary(&target);
+    let f_data = mmap_file(&target);
     if !containt_string(&f_data, "__dfsw___angora_trace_cmp_tt") {
         panic!("The program is not complied by Angora with taint tracking");
     }

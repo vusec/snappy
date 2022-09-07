@@ -1,0 +1,28 @@
+[package]
+name = "runtime_fast"
+version = "1.2.2"
+authors = ["sp1npx <spinpx@gmail.com>"]
+edition = "2018"
+
+[lib]
+crate-type = ["staticlib"] # "cdylib"
+
+[features]
+default = ["autoinit"]
+autoinit = ["ctor", "log", "env_logger"]
+
+[dependencies]
+libc = "0.2"
+byteorder = "1.2"
+angora_common = { path = "../../common" }
+once_cell = "1.7.2"
+ctor = { version = "0.1.9", optional = true }
+snafu = "0.6.10"
+log = { version = "0.4", optional = true }
+env_logger = { version = "0.7", optional = true }
+
+[build-dependencies]
+cc = "1.0"
+
+[profile.release]
+debug = true

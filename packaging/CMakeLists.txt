@@ -1,0 +1,2 @@
+set(CPACK_VERBATIM_VARIABLES TRUE)
+include(CPack)

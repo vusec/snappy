@@ -3,8 +3,8 @@
 // Random pick offsets, then flip, add/sub ..
 // And GE algorithm.
 
-use super::*;
-use rand::{self, distributions::Uniform, Rng};
+use super::{config, get_interesting_bytes, mut_input, SearchHandler};
+use rand::{distributions::Uniform, prelude::*};
 
 static IDX_TO_SIZE: [usize; 4] = [1, 2, 4, 8];
 
@@ -29,9 +29,9 @@ impl<'a> AFLFuzz<'a> {
         Self { handler, run_ratio }
     }
 
-    pub fn run(&mut self) {
+    pub fn run<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         if self.handler.cond.is_first_time() {
-            self.afl_len();
+            self.afl_len(rng);
         }
 
         self.handler.max_times = (config::MAX_SPLICE_TIMES * self.run_ratio).into();
@@ -39,7 +39,7 @@ impl<'a> AFLFuzz<'a> {
             if self.handler.is_stopped_or_skip() {
                 break;
             }
-            if !self.splice() {
+            if !self.splice(rng) {
                 break;
             }
         }
@@ -65,7 +65,7 @@ impl<'a> AFLFuzz<'a> {
                 break;
             }
             let mut buf = self.handler.buf.clone();
-            self.havoc_flip(&mut buf, max_stacking, choice_range);
+            self.havoc_flip(&mut buf, max_stacking, choice_range, rng);
             self.handler.execute(&buf);
         }
     }
@@ -106,9 +106,9 @@ impl<'a> AFLFuzz<'a> {
     }
 
     // GE algorithm
-    fn splice(&mut self) -> bool {
+    fn splice<R: Rng + ?Sized>(&mut self, rng: &mut R) -> bool {
         let buf1 = self.handler.buf.clone();
-        let buf2 = self.handler.executor.random_input_buf();
+        let buf2 = self.handler.executor.random_input_buf(rng);
         if let Some(new_buf) = Self::splice_two_vec(&buf1, &buf2) {
             self.handler.execute(&new_buf);
             true
@@ -118,26 +118,41 @@ impl<'a> AFLFuzz<'a> {
     }
 
     // TODO both endian?
-    fn havoc_flip(&self, buf: &mut Vec<u8>, max_stacking: usize, choice_range: Uniform<u32>) {
-        let mut rng = rand::thread_rng();
+    fn havoc_flip<R: Rng + ?Sized>(
+        &self,
+        buf: &mut Vec<u8>,
+        max_stacking: usize,
+        choice_range: Uniform<u32>,
+        rng: &mut R,
+    ) {
         let mut byte_len = buf.len() as u32;
-        let use_stacking = 1 + rng.gen_range(0, max_stacking);
+        let use_stacking = 1 + rng.gen_range(0..max_stacking);
 
         for _ in 0..use_stacking {
-            match rng.sample(choice_range) {
+            let choice = if byte_len > 0 {
+                rng.sample(choice_range)
+            } else if config::ENABLE_MICRO_RANDOM_LEN {
+                // If the test case has no bytes, the only thing that can be
+                // done is add a few.
+                7
+            } else {
+                break;
+            };
+
+            match choice {
                 0 | 1 => {
                     // flip bit
-                    let byte_idx: u32 = rng.gen_range(0, byte_len);
-                    let bit_idx: u32 = rng.gen_range(0, 8);
+                    let byte_idx: u32 = rng.gen_range(0..byte_len);
+                    let bit_idx: u32 = rng.gen_range(0..8);
                     buf[byte_idx as usize] ^= 128 >> bit_idx;
                 },
                 2 | 3 => {
                     //add or sub
-                    let n: u32 = rng.gen_range(0, 3);
+                    let n: u32 = rng.gen_range(0..3);
                     let size = IDX_TO_SIZE[n as usize];
                     if byte_len > size as u32 {
-                        let byte_idx: u32 = rng.gen_range(0, byte_len - size as u32);
-                        let v: u32 = rng.gen_range(0, config::MUTATE_ARITH_MAX);
+                        let byte_idx: u32 = rng.gen_range(0..byte_len - size as u32);
+                        let v: u32 = rng.gen_range(0..config::MUTATE_ARITH_MAX);
                         let direction: bool = rng.gen();
                         mut_input::update_val_in_buf(
                             buf,
@@ -151,28 +166,28 @@ impl<'a> AFLFuzz<'a> {
                 },
                 4 => {
                     // set interesting value
-                    let n: u32 = rng.gen_range(0, 3);
+                    let n: u32 = rng.gen_range(0..3);
                     let size = IDX_TO_SIZE[n as usize];
                     if byte_len > size as u32 {
-                        let byte_idx: u32 = rng.gen_range(0, byte_len - size as u32);
+                        let byte_idx: u32 = rng.gen_range(0..byte_len - size as u32);
                         let vals = get_interesting_bytes(size);
-                        let wh = rng.gen_range(0, vals.len() as u32);
+                        let wh = rng.gen_range(0..vals.len() as u32);
                         mut_input::set_val_in_buf(buf, byte_idx as usize, size, vals[wh as usize]);
                     }
                 },
                 5 => {
                     // random byte
-                    let byte_idx: u32 = rng.gen_range(0, byte_len);
+                    let byte_idx: u32 = rng.gen_range(0..byte_len);
                     let val: u8 = rng.gen();
                     buf[byte_idx as usize] = val;
                 },
                 6 => {
                     // delete bytes
-                    let remove_len: u32 = rng.gen_range(1, 5);
+                    let remove_len: u32 = rng.gen_range(1..5);
                     if byte_len > remove_len {
                         byte_len -= remove_len;
                         //assert!(byte_len > 0);
-                        let byte_idx: u32 = rng.gen_range(0, byte_len);
+                        let byte_idx: u32 = rng.gen_range(0..byte_len);
                         for _ in 0..remove_len {
                             buf.remove(byte_idx as usize);
                         }
@@ -180,10 +195,15 @@ impl<'a> AFLFuzz<'a> {
                 },
                 7 => {
                     // insert bytes
-                    let add_len = rng.gen_range(1, 5);
+                    let add_len = rng.gen_range(1..5);
                     let new_len = byte_len + add_len;
                     if new_len < config::MAX_INPUT_LEN as u32 {
-                        let byte_idx: u32 = rng.gen_range(0, byte_len);
+                        let byte_idx: u32 = if byte_len > 0 {
+                            rng.gen_range(0..byte_len)
+                        } else {
+                            0
+                        };
+
                         byte_len = new_len;
                         for i in 0..add_len {
                             buf.insert((byte_idx + i) as usize, rng.gen());
@@ -195,7 +215,7 @@ impl<'a> AFLFuzz<'a> {
         }
     }
 
-    fn random_len(&mut self) {
+    fn random_len<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let len = self.handler.buf.len();
         if len > config::MAX_INPUT_LEN {
             return;
@@ -203,7 +223,6 @@ impl<'a> AFLFuzz<'a> {
 
         // let step = std::cmp::max( len / config::INFLATE_MAX_ITER_NUM + 1, 5);
         let orig_len = self.handler.buf.len();
-        let mut rng = rand::thread_rng();
 
         let mut buf = self.handler.buf.clone();
         for _ in 0..config::RANDOM_LEN_NUM {
@@ -219,14 +238,14 @@ impl<'a> AFLFuzz<'a> {
         }
     }
 
-    fn add_small_len(&mut self) {
+    fn add_small_len<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let len = self.handler.buf.len();
         if len > config::MAX_INPUT_LEN {
             return;
         }
 
-        let mut rng = rand::thread_rng();
         let mut buf = self.handler.buf.clone();
+
         let mut step = 1;
         for _ in 0..4 {
             let mut v = vec![0u8; step];
@@ -241,11 +260,11 @@ impl<'a> AFLFuzz<'a> {
         }
     }
 
-    fn afl_len(&mut self) {
+    fn afl_len<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         if config::ENABLE_RANDOM_LEN {
-            self.random_len();
+            self.random_len(rng);
         } else {
-            self.add_small_len();
+            self.add_small_len(rng);
         }
     }
 }

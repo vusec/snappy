@@ -41,10 +41,16 @@ target=${name}/${name}
 
 rm -f ${target}.fast ${target}.cmp ${target}.taint 
 
-bin_dir=../bin/
-USE_FAST=1 ${bin_dir}/angora-clang++ -std=c++11 ${target}.cpp -o ${target}.fast
-USE_TRACK=1 ${bin_dir}/angora-clang++ -std=c++11 ${target}.cpp -o ${target}.taint
-# USE_PIN=1 ${bin_dir}/angora-clang++ -std=c++11 ${target}.cpp -o ${target}.pin
+angora_prefix='../angora_prefix'
+USE_FAST=1 \
+    "${angora_prefix}/bin/angora-clang++" -std=c++11 ${target}.cpp \
+    -o ${target}.fast
+USE_TRACK=1 \
+    "${angora_prefix}/bin/angora-clang++" -std=c++11 ${target}.cpp \
+    -o ${target}.taint
+# USE_PIN=1 \
+#     "${angora_prefix}/bin/angora-clang++" -std=c++11 ${target}.cpp \
+#     -o ${target}.pin
 
 echo "Compile Done.."
 

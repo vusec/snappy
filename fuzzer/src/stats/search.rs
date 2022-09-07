@@ -1,6 +1,6 @@
 use super::*;
 use crate::cond_stmt::CondStmt;
-use serde_derive::Serialize;
+use serde::Serialize;
 
 #[derive(Clone, Default, Serialize)]
 struct ConstraintStats {
@@ -94,13 +94,10 @@ impl SearchStats {
 
 impl fmt::Display for SearchStats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            r#"    SEARCH | {}
-   UNDESIR | {}
-   ONEBYTE | {}
-  INCONSIS | {}"#,
-            self.sch, self.undesirable_sch, self.onebyte_sch, self.inconsistent_sch,
-        )
+        writeln!(f, "    SEARCH | {}", self.sch)?;
+        writeln!(f, "   UNDESIR | {}", self.undesirable_sch)?;
+        writeln!(f, "   ONEBYTE | {}", self.onebyte_sch)?;
+        writeln!(f, "  INCONSIS | {}", self.inconsistent_sch)?;
+        Ok(())
     }
 }

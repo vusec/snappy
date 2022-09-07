@@ -83,7 +83,7 @@ fun:getdelim=custom
 fun:__getdelim=uninstrumented
 fun:__getdelim=custom
 
-# stat
+# length
 fun:stat=uninstrumented
 fun:stat=custom
 fun:fstat=uninstrumented
@@ -94,6 +94,7 @@ fun:__xstat=uninstrumented
 fun:__xstat=custom
 fun:__lxstat=custom
 fun:__fxstat=custom
+fun:ftell=custom
 
 # getc may be implemented as a macro
 ## some getc may be optimizted to __uflow ..
@@ -157,6 +158,18 @@ fun:getutxent=custom
 # -lm math
 fun:ceil=functional
 fun:sqrtf=functional
+fun:ldexp=functional
+fun:ldexpf=functional
+fun:ldexpl=functional
+fun:sin=functional
+fun:sinf=functional
+fun:sinl=functional
+fun:cos=functional
+fun:cosf=functional
+fun:cosl=functional
+fun:tan=functional
+fun:tanf=functional
+fun:tanl=functional
 
 ### glibc
 # fun:exit=uninstrumented
@@ -220,3 +233,9 @@ fun:getrandom=discard
 
 fun:fcntl64=uninstrumented
 fun:fcntl64=discard
+
+# FuzzBench main wrappers
+fun:__wrap_main=uninstrumented
+fun:__wrap_main=discard
+fun:__real_main=uninstrumented
+fun:__real_main=discard

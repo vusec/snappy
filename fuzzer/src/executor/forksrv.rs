@@ -1,16 +1,23 @@
-use super::{limit::SetLimit, *};
-use angora_common::defs::*;
+use super::{
+    limit::SetLimit,
+    pollable::{PollEvents, Pollable},
+    StatusType,
+};
+use angora_common::defs;
+
+use anyhow::{anyhow, Context};
 use byteorder::{LittleEndian, ReadBytesExt};
 use libc;
 use std::{
     collections::HashMap,
+    ffi::OsString,
     fs,
     io::prelude::*,
     os::unix::{
         io::RawFd,
         net::{UnixListener, UnixStream},
     },
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::Duration,
 };
@@ -18,81 +25,91 @@ use std::{
 // Just meaningless value for forking a new child
 static FORKSRV_NEW_CHILD: [u8; 4] = [8, 8, 8, 8];
 
+/// This structure manages a fork server process. It allows to start it, reset it
+/// when needed and spawn new children. It does not handle the input test case,
+/// which needs to be set up before spawning new children.
 #[derive(Debug)]
 pub struct Forksrv {
-    path: String,
-    pub socket: UnixStream,
+    socket_path: PathBuf,
+    socket: UnixStream,
     uses_asan: bool,
-    is_stdin: bool,
 }
 
 impl Forksrv {
     pub fn new(
-        socket_path: &str,
-        target: &(String, Vec<String>),
-        envs: &HashMap<String, String>,
+        socket_path: impl AsRef<Path>,
+        target: &(PathBuf, Vec<OsString>),
+        envs: &HashMap<OsString, OsString>,
         fd: RawFd,
         is_stdin: bool,
         uses_asan: bool,
-        time_limit: u64,
+        time_limit: Duration,
         mem_limit: u64,
-    ) -> Forksrv {
-        debug!("socket_path: {:?}", socket_path);
-        let listener = match UnixListener::bind(socket_path) {
-            Ok(sock) => sock,
-            Err(e) => {
-                error!("FATAL: Failed to bind to socket: {:?}", e);
-                panic!();
-            }
-        };
+    ) -> Result<Forksrv, anyhow::Error> {
+        debug!("socket_path: {:?}", socket_path.as_ref().display());
+        let listener = UnixListener::bind(&socket_path).context("Failed to bind to socket")?;
 
         let mut envs_fk = envs.clone();
-        envs_fk.insert(ENABLE_FORKSRV.to_string(), String::from("TRUE"));
-        envs_fk.insert(FORKSRV_SOCKET_PATH_VAR.to_string(), socket_path.to_owned());
-        match Command::new(&target.0)
+        envs_fk.insert(OsString::from(defs::ENABLE_FORKSRV), OsString::from("TRUE"));
+        envs_fk.insert(
+            OsString::from(defs::FORKSRV_SOCKET_PATH_VAR),
+            socket_path.as_ref().into(),
+        );
+        Command::new(&target.0)
             .args(&target.1)
             .stdin(Stdio::null())
             .envs(&envs_fk)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .mem_limit(mem_limit.clone())
+            .mem_limit(mem_limit)
+            .block_core_files()
             .setsid()
             .pipe_stdin(fd, is_stdin)
             .spawn()
+            .context("Failed to spawn child.")?;
+
+        log::trace!(
+            "Polling for connection request on: {}",
+            socket_path.as_ref().display()
+        );
+        if !listener
+            .poll(PollEvents::POLLIN, Some(time_limit))
+            .context("Failed to poll on socket")?
         {
-            Ok(_) => (),
-            Err(e) => {
-                error!("FATAL: Failed to spawn child. Reason: {}", e);
-                panic!();
-            }
-        };
+            return Err(anyhow!(
+                "Child failed to connect to socket: {}",
+                socket_path.as_ref().display()
+            ));
+        }
 
-        // FIXME: block here if client doesn't exist.
-        let (socket, _) = match listener.accept() {
-            Ok(a) => a,
-            Err(e) => {
-                error!("FATAL: failed to accept from socket: {:?}", e);
-                panic!();
-            }
-        };
+        log::trace!(
+            "Accepting connection on: {}",
+            socket_path.as_ref().display()
+        );
+        let (socket, _) = listener.accept().context("Failed to accept from socket")?;
 
         socket
-            .set_read_timeout(Some(Duration::from_secs(time_limit)))
-            .expect("Couldn't set read timeout");
+            .set_read_timeout(Some(time_limit))
+            .expect("Timeout was zero");
         socket
-            .set_write_timeout(Some(Duration::from_secs(time_limit)))
-            .expect("Couldn't set write timeout");
+            .set_write_timeout(Some(time_limit))
+            .expect("Timeout was zero");
 
-        debug!("All right -- Init ForkServer {} successfully!", socket_path);
+        debug!(
+            "All right -- Init ForkServer {} successfully!",
+            socket_path.as_ref().display()
+        );
 
-        Forksrv {
-            path: socket_path.to_owned(),
+        Ok(Forksrv {
+            socket_path: socket_path.as_ref().to_path_buf(),
             socket,
             uses_asan,
-            is_stdin,
-        }
+        })
     }
 
+    /// Spawn new child from fork server. The input for the target program should
+    /// have already been modified appropriately, this function handles only the
+    /// communication over the sockets.
     pub fn run(&mut self) -> StatusType {
         if self.socket.write(&FORKSRV_NEW_CHILD).is_err() {
             warn!("Fail to write socket!!");
@@ -108,20 +125,20 @@ impl Forksrv {
                     Err(e) => {
                         warn!("Unable to recover child pid: {:?}", e);
                         return StatusType::Error;
-                    }
+                    },
                 };
                 if child_pid <= 0 {
                     warn!(
-                        "Unable to request new process from frok server! {}",
+                        "Unable to request new process from fork server! {}",
                         child_pid
                     );
                     return StatusType::Error;
                 }
-            }
+            },
             Err(error) => {
                 warn!("Fail to read child_id -- {}", error);
                 return StatusType::Error;
-            }
+            },
         }
 
         buf = vec![0; 4];
@@ -135,18 +152,17 @@ impl Forksrv {
                     Err(e) => {
                         warn!("Unable to recover result from child: {}", e);
                         return StatusType::Error;
-                    }
+                    },
                 };
-                let exit_code = unsafe { libc::WEXITSTATUS(status) };
-                let signaled = unsafe { libc::WIFSIGNALED(status) };
-                if signaled || (self.uses_asan && exit_code == MSAN_ERROR_CODE) {
+                let exit_code = libc::WEXITSTATUS(status);
+                let signaled = libc::WIFSIGNALED(status);
+                if signaled || (self.uses_asan && exit_code == defs::MSAN_ERROR_CODE) {
                     debug!("Crash code: {}", status);
                     StatusType::Crash
                 } else {
                     StatusType::Normal
                 }
-            }
-
+            },
             Err(_) => {
                 unsafe {
                     libc::kill(child_pid, libc::SIGKILL);
@@ -156,7 +172,7 @@ impl Forksrv {
                     warn!("Killing timed out process");
                 }
                 return StatusType::Timeout;
-            }
+            },
         }
     }
 }
@@ -169,9 +185,8 @@ impl Drop for Forksrv {
         if self.socket.write(&fin).is_err() {
             debug!("Fail to write socket !!  FIN ");
         }
-        let path = Path::new(&self.path);
-        if path.exists() {
-            if fs::remove_file(&self.path).is_err() {
+        if self.socket_path.exists() {
+            if fs::remove_file(&self.socket_path).is_err() {
                 warn!("Fail to remove socket file!!  FIN ");
             }
         }

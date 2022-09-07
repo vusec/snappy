@@ -1,6 +1,6 @@
 use super::*;
 use colored::*;
-use serde_derive::Serialize;
+use serde::Serialize;
 
 #[derive(
     Default, Clone, Copy, Eq, PartialEq, Add, AddAssign, From, Into, Ord, PartialOrd, Serialize,
@@ -114,9 +114,9 @@ impl fmt::Display for TimeDuration {
 #[derive(Clone, Copy)]
 pub struct TimeIns(pub time::Instant);
 
-impl Into<TimeDuration> for TimeIns {
-    fn into(self) -> TimeDuration {
-        self.0.elapsed().into()
+impl TimeIns {
+    pub fn elapsed(&self) -> TimeDuration {
+        TimeDuration(self.0.elapsed().into())
     }
 }
 

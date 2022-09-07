@@ -1,3 +1,7 @@
 [submodule "pin_mode/libdft64"]
 	path = pin_mode/libdft64
 	url = https://github.com/AngoraFuzzer/libdft64.git
+[submodule "common/externals/AFL-Snapshot-LKM"]
+	path = common/externals/AFL-Snapshot-LKM
+	url = https://github.com/vusec/AFL-Snapshot-LKM-snappy.git
+	branch = fix-fd-snapshot

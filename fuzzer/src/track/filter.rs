@@ -79,7 +79,7 @@ fn filter_eof(cond: &CondStmt) -> bool {
 }
 
 pub fn filter_cond_list(cond_list: &mut Vec<CondStmt>) {
-    // mark conds we don;t use in future to be undesirable
+    // mark conds we don't use in future to be undesirable
     // those undesirable ones won't be added to depot in `depot.rs`
     let mut exploitable_labels = HashSet::new();
     let mut unique_conds = HashSet::new();
@@ -109,6 +109,15 @@ pub fn filter_cond_list(cond_list: &mut Vec<CondStmt>) {
             } else {
                 unique_conds.insert(condargs);
             }
+        }
+
+        if !cond.is_desirable {
+            log::trace!(
+                "Condition marked as undesirable: ({},{},{})",
+                cond.base.cmpid,
+                cond.base.context,
+                cond.base.order
+            );
         }
     }
 

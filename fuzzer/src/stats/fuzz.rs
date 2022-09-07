@@ -1,6 +1,6 @@
 use super::*;
 use crate::cond_stmt::CondStmt;
-use serde_derive::Serialize;
+use serde::Serialize;
 
 #[derive(Clone, Copy, Default, Serialize)]
 pub struct StrategyStats {
@@ -53,9 +53,12 @@ impl FuzzStats {
     }
 
     pub fn may_be_model_failure(&self) -> bool {
-        self.0[fuzz_type::FuzzType::ExploreFuzz.index()].num_conds.0 + 1
-            < (self.0[fuzz_type::FuzzType::AFLFuzz.index()].num_conds.0
-                + self.0[fuzz_type::FuzzType::OtherFuzz.index()].num_conds.0)
+        let explore_fuzz_stats = self.0[fuzz_type::FuzzType::ExploreFuzz.index()];
+        let afl_fuzz_stats = self.0[fuzz_type::FuzzType::AFLFuzz.index()];
+        let other_fuzz_stats = self.0[fuzz_type::FuzzType::OtherFuzz.index()];
+
+        explore_fuzz_stats.num_conds.0 + 1
+            < afl_fuzz_stats.num_conds.0 + other_fuzz_stats.num_conds.0
     }
 }
 

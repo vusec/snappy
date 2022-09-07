@@ -2,8 +2,9 @@ use crate::{check_dep, search, tmpfs};
 use angora_common::defs;
 use std::{
     env,
+    ffi::OsString,
     path::{Path, PathBuf},
-    process::Command,
+    time::Duration,
 };
 
 static TMP_DIR: &str = "tmp";
@@ -36,21 +37,21 @@ impl InstrumentationMode {
 pub struct CommandOpt {
     pub mode: InstrumentationMode,
     pub id: usize,
-    pub main: (String, Vec<String>),
-    pub track: (String, Vec<String>),
+    pub main: (PathBuf, Vec<OsString>),
+    pub track: (PathBuf, Vec<OsString>),
     pub tmp_dir: PathBuf,
-    pub out_file: String,
-    pub forksrv_socket_path: String,
-    pub track_path: String,
+    pub out_file: PathBuf,
+    pub forksrv_socket_path: PathBuf,
+    pub track_path: PathBuf,
     pub is_stdin: bool,
     pub search_method: search::SearchMethod,
     pub mem_limit: u64,
-    pub time_limit: u64,
+    pub time_limit: Duration,
     pub is_raw: bool,
     pub uses_asan: bool,
-    pub ld_library: String,
     pub enable_afl: bool,
     pub enable_exploitation: bool,
+    pub deterministic_seed: Option<u64>,
 }
 
 impl CommandOpt {
@@ -61,33 +62,22 @@ impl CommandOpt {
         out_dir: &Path,
         search_method: &str,
         mut mem_limit: u64,
-        time_limit: u64,
+        time_limit: Duration,
         enable_afl: bool,
         enable_exploitation: bool,
+        deterministic_seed: Option<u64>,
     ) -> Self {
         let mode = InstrumentationMode::from(mode);
-        
+
         let tmp_dir = out_dir.join(TMP_DIR);
         tmpfs::create_tmpfs_dir(&tmp_dir);
 
-        let out_file = tmp_dir.join(INPUT_FILE).to_str().unwrap().to_owned();
-        let forksrv_socket_path = tmp_dir
-            .join(FORKSRV_SOCKET_FILE)
-            .to_str()
-            .unwrap()
-            .to_owned();
+        let out_file = tmp_dir.join(INPUT_FILE);
+        let forksrv_socket_path = tmp_dir.join(FORKSRV_SOCKET_FILE);
 
-        let track_path = tmp_dir.join(TRACK_FILE).to_str().unwrap().to_owned();
+        let track_path = tmp_dir.join(TRACK_FILE);
 
         let has_input_arg = pargs.contains(&"@@".to_string());
-
-        let clang_lib = Command::new("llvm-config")
-            .arg("--libdir")
-            .output()
-            .expect("Can't find llvm-config")
-            .stdout;
-        let clang_lib = String::from_utf8(clang_lib).unwrap();
-        let ld_library = "$LD_LIBRARY_PATH:".to_string() + clang_lib.trim();
 
         assert_ne!(
             track_target, "-",
@@ -96,7 +86,7 @@ impl CommandOpt {
 
         let mut tmp_args = pargs.clone();
         let main_bin = tmp_args[0].clone();
-        let main_args: Vec<String> = tmp_args.drain(1..).collect();
+        let main_args: Vec<OsString> = tmp_args.drain(1..).map(|arg| arg.into()).collect();
         let uses_asan = check_dep::check_asan(&main_bin);
         if uses_asan && mem_limit != 0 {
             warn!("The program compiled with ASAN, set MEM_LIMIT to 0 (unlimited)");
@@ -104,25 +94,21 @@ impl CommandOpt {
         }
 
         let track_bin;
-        let mut track_args = Vec::<String>::new();
+        let mut track_args = Vec::<OsString>::new();
         if mode.is_pin_mode() {
-            let project_bin_dir = env::var(defs::ANGORA_BIN_DIR).expect("Please set ANGORA_PROJ_DIR");
-            
+            let project_bin_dir =
+                env::var(defs::ANGORA_BIN_DIR).expect("Please set ANGORA_PROJ_DIR");
+
             let pin_root =
                 env::var(PIN_ROOT_VAR).expect("You should set the environment of PIN_ROOT!");
             let pin_bin = format!("{}/{}", pin_root, "pin");
             track_bin = pin_bin.to_string();
-            let pin_tool = Path::new(&project_bin_dir)
-                .join("lib")
-                .join("pin_track.so")
-                .to_str()
-                .unwrap()
-                .to_owned();
+            let pin_tool = Path::new(&project_bin_dir).join("lib").join("pin_track.so");
 
-            track_args.push(String::from("-t"));
-            track_args.push(pin_tool);
-            track_args.push(String::from("--"));
-            track_args.push(track_target.to_string());
+            track_args.push(OsString::from("-t"));
+            track_args.push(pin_tool.into_os_string());
+            track_args.push(OsString::from("--"));
+            track_args.push(OsString::from(track_target));
             track_args.extend(main_args.clone());
         } else {
             track_bin = track_target.to_string();
@@ -132,10 +118,10 @@ impl CommandOpt {
         Self {
             mode,
             id: 0,
-            main: (main_bin, main_args),
-            track: (track_bin, track_args),
+            main: (main_bin.into(), main_args.clone()),
+            track: (track_bin.into(), track_args),
             tmp_dir,
-            out_file: out_file,
+            out_file,
             forksrv_socket_path,
             track_path,
             is_stdin: !has_input_arg,
@@ -144,33 +130,33 @@ impl CommandOpt {
             time_limit,
             uses_asan,
             is_raw: true,
-            ld_library,
             enable_afl,
             enable_exploitation,
+            deterministic_seed,
         }
     }
 
     pub fn specify(&self, id: usize) -> Self {
         let mut cmd_opt = self.clone();
-        let new_file = format!("{}_{}", &cmd_opt.out_file, id);
-        let new_forksrv_socket_path = format!("{}_{}", &cmd_opt.forksrv_socket_path, id);
-        let new_track_path = format!("{}_{}", &cmd_opt.track_path, id);
+        let new_file = self.tmp_dir.join(format!("{}_{}", INPUT_FILE, id));
+        let new_forksrv_socket_path = self.tmp_dir.join(format!("{}_{}", FORKSRV_SOCKET_FILE, id));
+        let new_track_path = self.tmp_dir.join(format!("{}_{}", TRACK_FILE, id));
         if !self.is_stdin {
             for arg in &mut cmd_opt.main.1 {
                 if arg == "@@" {
-                    *arg = new_file.clone();
+                    *arg = new_file.clone().into_os_string();
                 }
             }
             for arg in &mut cmd_opt.track.1 {
                 if arg == "@@" {
-                    *arg = new_file.clone();
+                    *arg = new_file.clone().into_os_string();
                 }
             }
         }
         cmd_opt.id = id;
         cmd_opt.out_file = new_file.to_owned();
-        cmd_opt.forksrv_socket_path = new_forksrv_socket_path.to_owned();
-        cmd_opt.track_path = new_track_path.to_owned();
+        cmd_opt.forksrv_socket_path = new_forksrv_socket_path;
+        cmd_opt.track_path = new_track_path;
         cmd_opt.is_raw = false;
         cmd_opt
     }

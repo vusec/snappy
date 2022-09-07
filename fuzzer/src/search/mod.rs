@@ -4,7 +4,6 @@ use crate::{
     mut_input::{self, MutInput},
 };
 use angora_common::config;
-use rand::prelude::*;
 use std::{
     self,
     sync::{

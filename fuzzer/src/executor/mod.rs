@@ -2,6 +2,7 @@ mod executor;
 mod forksrv;
 mod limit;
 mod pipe_fd;
+mod pollable;
 mod status_type;
 
 use self::pipe_fd::PipeFd;

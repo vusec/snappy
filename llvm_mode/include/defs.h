@@ -51,15 +51,6 @@
   } while (0)
 #endif
 
-#ifndef MIN
-#define MIN(_a, _b) ((_a) > (_b) ? (_b) : (_a))
-#define MAX(_a, _b) ((_a) > (_b) ? (_a) : (_b))
-#endif /* !MIN */
-
-#ifndef RRR
-#define RRR(x) (random() % (x))
-#endif
-
 #include <stdint.h>
 #include <stdlib.h>
 

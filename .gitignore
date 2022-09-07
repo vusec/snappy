@@ -1,6 +1,5 @@
 /target/
 **/*.rs.bk
-Cargo.lock
 .vscode
 *.taint
 *.fast
@@ -16,7 +15,11 @@ output*/
 *.tar.gz
 *.tar.xz
 auto/
-/bin/
+angora_prefix/
+angora_build/
 obj-intel64/
 .DS_Store
 llvm_mode/build/
+compile_commands.json
+.cache
+core.*

@@ -18,9 +18,9 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "./heapmap.h"
-#include "./defs.h"
-#include "./dfsan_interface.h"
+#include "heapmap.h"
+#include "defs.h"
+#include "sanitizer/angora_dfsan_interface.h"
 
 __attribute__((visibility("default"))) void *
 __dfsw_malloc(size_t size, dfsan_label size_label, dfsan_label *ret_label) {

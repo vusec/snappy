@@ -2,8 +2,8 @@
 Gradient descend search
 */
 
-use super::*;
-use std;
+use super::{config, get_interesting_bytes, Grad, MutInput, SearchHandler};
+use rand::prelude::*;
 
 pub struct GdSearch<'a> {
     handler: SearchHandler<'a>,
@@ -27,7 +27,7 @@ impl<'a> GdSearch<'a> {
         f
     }
 
-    fn random_fuzz<T: Rng>(&mut self, rng: &mut T) {
+    fn random_fuzz<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let mut fmin = std::u64::MAX;
         let mut input = self.handler.get_f_input();
         let mut input_min = input.get_value();
@@ -49,7 +49,7 @@ impl<'a> GdSearch<'a> {
         }
     }
 
-    pub fn run<T: Rng>(&mut self, rng: &mut T) {
+    pub fn run<R: Rng + ?Sized>(&mut self, rng: &mut R) {
         let mut input = self.handler.get_f_input();
         assert!(
             input.len() > 0,
@@ -161,11 +161,11 @@ impl<'a> GdSearch<'a> {
         false
     }
 
-    fn repick_start_point<T: Rng>(
+    fn repick_start_point<R: Rng + ?Sized>(
         &mut self,
         input_min: &mut MutInput,
         _f0: u64,
-        rng: &mut T,
+        rng: &mut R,
     ) -> u64 {
         let mut fmin = std::u64::MAX;
         let mut input = input_min.clone();
@@ -230,7 +230,7 @@ impl<'a> GdSearch<'a> {
                 } else {
                     (true, false, f0 - f_plus)
                 }
-            }
+            },
         }
     }
 
@@ -262,12 +262,12 @@ impl<'a> GdSearch<'a> {
         }
     }
 
-    fn descend(
+    fn descend<R: Rng + ?Sized>(
         &mut self,
         input_min: &mut MutInput,
         f0: u64,
         grad: &Grad,
-        rng: &mut impl Rng,
+        rng: &mut R,
     ) -> u64 {
         let mut f_last = f0;
         let mut input = input_min.clone();

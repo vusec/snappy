@@ -5,11 +5,11 @@ if [ ! "$#" = "2" ]; then
     cat 1>&2 <<_EOF_
 Usage
 - Discard taints
-$ ./gen_library_abilist.sh path-to-library.so > xxlib_abilist.txt discard
+$ ./gen_library_abilist.sh path-to-library.so discard > xxlib_abilist.txt
 - Return value is the union of the label of its arguments.
-$ ./gen_library_abilist.sh path-to-library.so > xxlib_abilist.txt functional
+$ ./gen_library_abilist.sh path-to-library.so functional > xxlib_abilist.txt
 - Define a custom wrapper by yourself
-$ ./gen_library_abilist.sh path-to-library.so > xxlib_abilist.txt custom
+$ ./gen_library_abilist.sh path-to-library.so custom > xxlib_abilist.txt
 visit https://clang.llvm.org/docs/DataFlowSanitizer.html to see more.
 _EOF_
 

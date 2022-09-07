@@ -8,12 +8,13 @@ use std::sync::{
     Arc, RwLock,
 };
 
-pub fn fuzz_loop(
+pub fn fuzz_loop<R: Rng + ?Sized>(
     running: Arc<AtomicBool>,
     cmd_opt: CommandOpt,
     depot: Arc<Depot>,
     global_branches: Arc<GlobalBranches>,
     global_stats: Arc<RwLock<stats::ChartStats>>,
+    rng: &mut R,
 ) {
     let search_method = cmd_opt.search_method;
     let mut executor = Executor::new(
@@ -33,6 +34,7 @@ pub fn fuzz_loop(
         let priority = entry.1;
 
         if priority.is_done() {
+            log::trace!("All conditions are marked as done.");
             break;
         }
 
@@ -79,16 +81,16 @@ pub fn fuzz_loop(
                     } else {
                         match search_method {
                             SearchMethod::Gd => {
-                                GdSearch::new(handler).run(&mut thread_rng());
+                                GdSearch::new(handler).run(rng);
                             },
                             SearchMethod::Random => {
-                                RandomSearch::new(handler).run();
+                                RandomSearch::new(handler).run(rng);
                             },
                             SearchMethod::Cbh => {
-                                CbhSearch::new(handler).run();
+                                CbhSearch::new(handler).run(rng);
                             },
                             SearchMethod::Mb => {
-                                MbSearch::new(handler).run();
+                                MbSearch::new(handler).run(rng);
                             },
                         }
                     }
@@ -99,14 +101,14 @@ pub fn fuzz_loop(
                         fz.run();
                         fz.handler.cond.to_unsolvable(); // to skip next time
                     } else {
-                        ExploitFuzz::new(handler).run();
+                        ExploitFuzz::new(handler).run(rng);
                     }
                 },
                 FuzzType::AFLFuzz => {
-                    AFLFuzz::new(handler).run();
+                    AFLFuzz::new(handler).run(rng);
                 },
                 FuzzType::LenFuzz => {
-                    LenFuzz::new(handler).run();
+                    LenFuzz::new(handler).run(rng);
                 },
                 FuzzType::CmpFnFuzz => {
                     FnFuzz::new(handler).run();

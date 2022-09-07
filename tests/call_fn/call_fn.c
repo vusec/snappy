@@ -44,6 +44,7 @@ int main (int argc, char** argv) {
 
   int32_t y = 0;
   memcpy(&y, buf + 4, 4); // y 4 - 7
+  printf("%d\n", y);
 
   foo(y);
 

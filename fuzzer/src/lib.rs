@@ -1,5 +1,3 @@
-#![cfg_attr(feature = "unstable", feature(core_intrinsics))]
-
 #[macro_use]
 extern crate log;
 #[macro_use]

@@ -24,71 +24,71 @@
 #include "alloc_inl.h"
 #include "defs.h"
 #include "debug.h"
-#include "version.h"
 
+#if defined(TEST_BUILD)
+#include "build_locations.h"
+#else
+#include "install_locations.h"
+#endif
+
+#include <argp.h>
+#include <assert.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
-static u8 *obj_path;       /* Path to runtime libraries         */
-static u8 **cc_params;     /* Parameters passed to the real CC  */
-static u32 cc_par_cnt = 1; /* Param count, including argv0      */
-static u8 clang_type = CLANG_FAST_TYPE;
-static u8 is_cxx = 0;
+#define ARRAY_SIZE(x) sizeof(x) / sizeof(x[0])
 
-/* Try to find the runtime libraries. If that fails, abort. */
-static void find_obj(u8 *argv0) {
+struct config {
+  u8 clang_type;
+  bool is_cxx;
+};
 
-  u8 *slash, *tmp;
-  slash = strrchr(argv0, '/');
-
-  if (slash) {
-    u8 *dir;
-    *slash = 0;
-    dir = ck_strdup(argv0);
-    *slash = '/';
-
-    tmp = alloc_printf("%s/pass/libAngoraPass.so", dir);
-    if (!access(tmp, R_OK)) {
-      obj_path = dir;
-      ck_free(tmp);
-      return;
-    }
-
-    ck_free(tmp);
-    ck_free(dir);
+static void verify_installation(void) {
+  if (!access(ANGORA_PASS_PATH, R_OK)) {
+    return;
   }
-
-  FATAL("Unable to find 'libAngoraPass.so'");
+  FATAL("Unable to find 'AngoraPass.so'");
 }
 
-static void check_type(char *name) {
-  u8 *use_fast = getenv("USE_FAST");
-  u8 *use_dfsan = getenv("USE_DFSAN");
-  u8 *use_track = getenv("USE_TRACK");
-  u8 *use_pin = getenv("USE_PIN");
+static struct config parse_config(char *name) {
+  struct config config = {
+    .clang_type = CLANG_FAST_TYPE,
+    .is_cxx = false,
+  };
+
+  char* use_fast = getenv("USE_FAST");
+  char* use_dfsan = getenv("USE_DFSAN");
+  char* use_track = getenv("USE_TRACK");
+  char* use_pin = getenv("USE_PIN");
+
   if (use_fast) {
-    clang_type = CLANG_FAST_TYPE;
+    config.clang_type = CLANG_FAST_TYPE;
   } else if (use_dfsan) {
-    clang_type = CLANG_DFSAN_TYPE;
+    config.clang_type = CLANG_DFSAN_TYPE;
   } else if (use_track) {
-    clang_type = CLANG_TRACK_TYPE;
+    config.clang_type = CLANG_TRACK_TYPE;
   } else if (use_pin) {
-    clang_type = CLANG_PIN_TYPE;
+    config.clang_type = CLANG_PIN_TYPE;
   }
+
   if (!strcmp(name, "angora-clang++")) {
-    is_cxx = 1;
+    config.is_cxx = true;
   }
+
+  return config;
 }
 
-static u8 check_if_assembler(u32 argc, const char **argv) {
+static u8 check_if_assembler(u32 argc, char **argv) {
   /* Check if a file with an assembler extension ("s" or "S") appears in argv */
 
   while (--argc) {
-    u8 *cur = *(++argv);
+    char* cur = *(++argv);
 
-    const u8 *ext = strrchr(cur, '.');
+    const char* ext = strrchr(cur, '.');
     if (ext && (!strcmp(ext + 1, "s") || !strcmp(ext + 1, "S"))) {
       return 1;
     }
@@ -97,125 +97,140 @@ static u8 check_if_assembler(u32 argc, const char **argv) {
   return 0;
 }
 
-static void add_angora_pass() {
-  if (clang_type != CLANG_DFSAN_TYPE) {
-    cc_params[cc_par_cnt++] = "-Xclang";
-    cc_params[cc_par_cnt++] = "-load";
-    cc_params[cc_par_cnt++] = "-Xclang";
-    cc_params[cc_par_cnt++] =
-        alloc_printf("%s/pass/libUnfoldBranchPass.so", obj_path);
+static void add_angora_pass(size_t* cc_par_cnt, char* cc_params[*cc_par_cnt], struct config* config) {
+  if (config->clang_type != CLANG_DFSAN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = "-Xclang";
+    cc_params[(*cc_par_cnt)++] = "-load";
+    cc_params[(*cc_par_cnt)++] = "-Xclang";
+    cc_params[(*cc_par_cnt)++] = UNFOLD_BRANCH_PASS_PATH;
   }
 
-  cc_params[cc_par_cnt++] = "-Xclang";
-  cc_params[cc_par_cnt++] = "-load";
-  cc_params[cc_par_cnt++] = "-Xclang";
-  cc_params[cc_par_cnt++] = alloc_printf("%s/pass/libAngoraPass.so", obj_path);
+  cc_params[(*cc_par_cnt)++] = "-Xclang";
+  cc_params[(*cc_par_cnt)++] = "-load";
+  cc_params[(*cc_par_cnt)++] = "-Xclang";
+  cc_params[(*cc_par_cnt)++] = ANGORA_PASS_PATH;
 
-  if (clang_type == CLANG_DFSAN_TYPE) {
-    cc_params[cc_par_cnt++] = "-mllvm";
-    cc_params[cc_par_cnt++] = "-DFSanMode";
-  } else if (clang_type == CLANG_TRACK_TYPE || clang_type == CLANG_PIN_TYPE) {
-    cc_params[cc_par_cnt++] = "-mllvm";
-    cc_params[cc_par_cnt++] = "-TrackMode";
+  cc_params[(*cc_par_cnt)++] = "-fno-builtin-bcmp"; // Incompatible with DFSan
+
+  if (config->clang_type == CLANG_DFSAN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = "-mllvm";
+    cc_params[(*cc_par_cnt)++] = "-DFSanMode";
+  } else if (config->clang_type == CLANG_TRACK_TYPE || config->clang_type == CLANG_PIN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = "-mllvm";
+    cc_params[(*cc_par_cnt)++] = "-TrackMode";
   }
 
-  cc_params[cc_par_cnt++] = "-mllvm";
-  cc_params[cc_par_cnt++] =
-      alloc_printf("-angora-dfsan-abilist=%s/rules/angora_abilist.txt", obj_path);
-  cc_params[cc_par_cnt++] = "-mllvm";
-  cc_params[cc_par_cnt++] =
-      alloc_printf("-angora-dfsan-abilist=%s/rules/dfsan_abilist.txt", obj_path);
-  cc_params[cc_par_cnt++] = "-mllvm";
-  cc_params[cc_par_cnt++] = alloc_printf(
-      "-angora-exploitation-list=%s/rules/exploitation_list.txt", obj_path);
+  for (size_t idx = 0; idx < ARRAY_SIZE(angora_abilists); ++idx) {
+    cc_params[(*cc_par_cnt)++] = "-mllvm";
+    if (!strstr(angora_abilists[idx], "exploitation")) {
+      cc_params[(*cc_par_cnt)++] =
+              alloc_printf("-angora-dfsan-abilist=%s", angora_abilists[idx]);
+    } else {
+      cc_params[(*cc_par_cnt)++] =
+          alloc_printf("-angora-exploitation-list=%s", angora_abilists[idx]);
+    }
+  }
 
   char *rule_list = getenv(TAINT_RULE_LIST_VAR);
   if (rule_list) {
-    printf("rule_list : %s\n", rule_list);
-    cc_params[cc_par_cnt++] = "-mllvm";
-    cc_params[cc_par_cnt++] =
+    cc_params[(*cc_par_cnt)++] = "-mllvm";
+    cc_params[(*cc_par_cnt)++] =
         alloc_printf("-angora-dfsan-abilist=%s", rule_list);
   }
 }
 
-static void add_angora_runtime() {
-  // cc_params[cc_par_cnt++] = "-I/${HOME}/clang+llvm/include/c++/v1";
-  if (clang_type == CLANG_FAST_TYPE) {
-    cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libruntime_fast.a", obj_path);
-  } else if (clang_type == CLANG_TRACK_TYPE || clang_type == CLANG_DFSAN_TYPE) {
-    cc_params[cc_par_cnt++] = "-Wl,--whole-archive";
-    cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libdfsan_rt-x86_64.a", obj_path);
-    cc_params[cc_par_cnt++] = "-Wl,--no-whole-archive";
-    cc_params[cc_par_cnt++] =
-        alloc_printf("-Wl,--dynamic-list=%s/lib/libdfsan_rt-x86_64.a.syms", obj_path);
-
-    cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libruntime.a", obj_path);
-    cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libDFSanIO.a", obj_path);
-    char *rule_obj = getenv(TAINT_CUSTOM_RULE_VAR);
-    if (rule_obj) {
-      cc_params[cc_par_cnt++] = rule_obj;
-    }
-  } else if (clang_type == CLANG_PIN_TYPE) {
-    cc_params[cc_par_cnt++] = alloc_printf("%s/lib/pin_stub.o", obj_path);
+static void add_angora_runtime(size_t *cc_par_cnt, char *cc_params[*cc_par_cnt],
+                               struct config *config) {
+  if (config->clang_type == CLANG_FAST_TYPE) {
+    cc_params[(*cc_par_cnt)++] = alloc_printf("%s", FAST_RTLIB_PATH);
+    cc_params[(*cc_par_cnt)++] = "-lpthread";
+    cc_params[(*cc_par_cnt)++] = "-ldl";
+    cc_params[(*cc_par_cnt)++] = "-lm";
+  } else if (config->clang_type == CLANG_TRACK_TYPE ||
+             config->clang_type == CLANG_DFSAN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = alloc_printf("%s", TRACK_RTLIB_PATH);
+    cc_params[(*cc_par_cnt)++] = "-lpthread";
+    cc_params[(*cc_par_cnt)++] = "-ldl";
+  } else if (config->clang_type == CLANG_PIN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = alloc_printf("%s/pin_stub.o", RUNLIBS_INSTALL_DIR);
   }
-
-  if (clang_type != CLANG_FAST_TYPE) {
-    // cc_params[cc_par_cnt++] = "-pthread";
-    if (!is_cxx)
-      cc_params[cc_par_cnt++] = "-lstdc++";
-    cc_params[cc_par_cnt++] = "-lrt";
-  }
-
-  cc_params[cc_par_cnt++] = "-Wl,--no-as-needed";
-  cc_params[cc_par_cnt++] = "-Wl,--gc-sections"; // if darwin -Wl, -dead_strip
-  cc_params[cc_par_cnt++] = "-ldl";
-  cc_params[cc_par_cnt++] = "-lpthread";
-  cc_params[cc_par_cnt++] = "-lm";
 }
 
-static void add_dfsan_pass() {
-  if (clang_type == CLANG_TRACK_TYPE || clang_type == CLANG_DFSAN_TYPE) {
-    cc_params[cc_par_cnt++] = "-Xclang";
-    cc_params[cc_par_cnt++] = "-load";
-    cc_params[cc_par_cnt++] = "-Xclang";
-    cc_params[cc_par_cnt++] = alloc_printf("%s/pass/libDFSanPass.so", obj_path);
-    cc_params[cc_par_cnt++] = "-mllvm";
-    cc_params[cc_par_cnt++] =
-        alloc_printf("-angora-dfsan-abilist2=%s/rules/angora_abilist.txt", obj_path);
-    cc_params[cc_par_cnt++] = "-mllvm";
-    cc_params[cc_par_cnt++] =
-        alloc_printf("-angora-dfsan-abilist2=%s/rules/dfsan_abilist.txt", obj_path);
+static void add_dfsan_pass(size_t *cc_par_cnt, char *cc_params[*cc_par_cnt],
+                           struct config *config) {
+  if (config->clang_type == CLANG_TRACK_TYPE ||
+      config->clang_type == CLANG_DFSAN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = "-Xclang";
+    cc_params[(*cc_par_cnt)++] = "-load";
+    cc_params[(*cc_par_cnt)++] = "-Xclang";
+    cc_params[(*cc_par_cnt)++] = DFSAN_PASS_PATH;
+
+    for (size_t idx = 0; idx < ARRAY_SIZE(angora_abilists); ++idx) {
+      if (!strstr(angora_abilists[idx], "exploitation")) {
+        cc_params[(*cc_par_cnt)++] = "-mllvm";
+        cc_params[(*cc_par_cnt)++] =
+            alloc_printf("-angora-dfsan-abilist2=%s", angora_abilists[idx]);
+      }
+    }
+
     char *rule_list = getenv(TAINT_RULE_LIST_VAR);
     if (rule_list) {
-      cc_params[cc_par_cnt++] = "-mllvm";
-      cc_params[cc_par_cnt++] =
+      cc_params[(*cc_par_cnt)++] = "-mllvm";
+      cc_params[(*cc_par_cnt)++] =
           alloc_printf("-angora-dfsan-abilist2=%s", rule_list);
     }
   }
 }
 
-static void edit_params(u32 argc, char **argv) {
+static void add_dfsan_runtime(size_t *cc_par_cnt, char *cc_params[*cc_par_cnt],
+                              struct config *config) {
+  if (config->clang_type == CLANG_TRACK_TYPE ||
+      config->clang_type == CLANG_DFSAN_TYPE) {
+    cc_params[(*cc_par_cnt)++] = alloc_printf(
+        "-Wl,--whole-archive,%s,--no-whole-archive", DFSAN_RTLIB_PATH);
+    cc_params[(*cc_par_cnt)++] =
+        alloc_printf("-Wl,--dynamic-list=%s", DFSAN_RTLIB_SYMS_PATH);
 
-  u8 fortify_set = 0, asan_set = 0, x_set = 0, maybe_linking = 1, bit_mode = 0;
+    cc_params[(*cc_par_cnt)++] = alloc_printf(
+        "-Wl,--whole-archive,%s,--no-whole-archive", EXTRA_RTLIB_PATH);
+    char *rule_obj = getenv(TAINT_CUSTOM_RULE_VAR);
+    if (rule_obj) {
+      cc_params[(*cc_par_cnt)++] = rule_obj;
+    }
+
+    // Taken from tools::linkSanitizerRuntimeDeps
+    cc_params[(*cc_par_cnt)++] = "-Wl,--no-as-needed";
+    cc_params[(*cc_par_cnt)++] = "-lpthread";
+    cc_params[(*cc_par_cnt)++] = "-lrt";
+    cc_params[(*cc_par_cnt)++] = "-lm";
+    cc_params[(*cc_par_cnt)++] = "-ldl";
+  }
+}
+
+static char** edit_params(u32 argc, char **argv) {
+
+  u8 fortify_set = 0, x_set = 0, maybe_linking = 1, bit_mode = 0;
   u8 maybe_assembler = 0;
-  u8 *name;
 
-  cc_params = ck_alloc((argc + 128) * sizeof(u8 *));
+  char** cc_params = ck_alloc((argc + 128) * sizeof(char*));
+  size_t cc_par_cnt = 0;
 
-  name = strrchr(argv[0], '/');
+  char* name = strrchr(argv[0], '/');
   if (!name)
     name = argv[0];
   else
     name++;
-  check_type(name);
 
-  if (is_cxx) {
-    u8 *alt_cxx = getenv("ANGORA_CXX");
-    cc_params[0] = alt_cxx ? alt_cxx : (u8 *)"clang++";
+  struct config config = parse_config(name);
+
+  if (config.is_cxx) {
+    char* alt_cxx = getenv("ANGORA_CXX");
+    cc_params[0] = alt_cxx ? alt_cxx : "clang++";
   } else {
-    u8 *alt_cc = getenv("ANGORA_CC");
-    cc_params[0] = alt_cc ? alt_cc : (u8 *)"clang";
+    char* alt_cc = getenv("ANGORA_CC");
+    cc_params[0] = alt_cc ? alt_cc : "clang";
   }
+  cc_par_cnt++;
 
   maybe_assembler = check_if_assembler(argc, argv);
 
@@ -223,8 +238,15 @@ static void edit_params(u32 argc, char **argv) {
   if (argc == 1 && !strcmp(argv[1], "-v"))
     maybe_linking = 0;
 
+  bool sanitizers_disabled = false;
+  if (getenv("ANGORA_DISABLE_SANITIZERS")) {
+    sanitizers_disabled = true;
+  }
+
+  bool asan_set = false;
+
   while (--argc) {
-    u8 *cur = *(++argv);
+    char* cur = *(++argv);
     // FIXME
     if (!strcmp(cur, "-O1") || !strcmp(cur, "-O2") || !strcmp(cur, "-O3")) {
       continue;
@@ -240,8 +262,20 @@ static void edit_params(u32 argc, char **argv) {
     if (!strcmp(cur, "-c") || !strcmp(cur, "-S") || !strcmp(cur, "-E"))
       maybe_linking = 0;
 
-    if (!strcmp(cur, "-fsanitize=address") || !strcmp(cur, "-fsanitize=memory"))
-      asan_set = 1;
+    if (!strncmp(cur, "-fsanitize=", strlen("-fsanitize="))) {
+      if (config.clang_type == CLANG_TRACK_TYPE ||
+          config.clang_type == CLANG_DFSAN_TYPE || sanitizers_disabled) {
+        // Always disable sanitizers when using DFSan because they are not
+        // compatible.
+        char *fsanitize_arg = strchr(cur, '=');
+        assert(fsanitize_arg);
+        fsanitize_arg++;
+        printf("warning: ignoring incompatible sanitizers: %s\n", fsanitize_arg);
+        continue;
+      }
+
+      asan_set = true;
+    }
 
     if (strstr(cur, "FORTIFY_SOURCE"))
       fortify_set = 1;
@@ -256,8 +290,8 @@ static void edit_params(u32 argc, char **argv) {
   }
 
   if (!maybe_assembler) {
-    add_angora_pass();
-    add_dfsan_pass();
+    add_angora_pass(&cc_par_cnt, cc_params, &config);
+    add_dfsan_pass(&cc_par_cnt, cc_params, &config);
   }
 
   cc_params[cc_par_cnt++] = "-pie";
@@ -281,7 +315,7 @@ static void edit_params(u32 argc, char **argv) {
       cc_params[cc_par_cnt++] = "-D_FORTIFY_SOURCE=2";
   }
 
-  if (!asan_set && clang_type == CLANG_FAST_TYPE) {
+  if (!asan_set && config.clang_type == CLANG_FAST_TYPE) {
     // We did not test Angora on asan and msan..
     if (getenv("ANGORA_USE_ASAN")) {
 
@@ -364,25 +398,24 @@ static void edit_params(u32 argc, char **argv) {
     "_I(); } while (0)";
   */
 
-  if (is_cxx) {
-    // FIXME: or use the same header
-    // cc_params[cc_par_cnt++] = "-I/path-to-llvm/include/c++/v1";
-    if (clang_type == CLANG_FAST_TYPE) {
-      cc_params[cc_par_cnt++] = alloc_printf("-L%s/lib/libcxx_fast/", obj_path);
-      cc_params[cc_par_cnt++] = "-stdlib=libc++";
-      cc_params[cc_par_cnt++] = "-Wl,--start-group";
-      cc_params[cc_par_cnt++] = "-lc++abifast";
-      cc_params[cc_par_cnt++] = "-lc++abi";
-      cc_params[cc_par_cnt++] = "-Wl,--end-group";
+  char* libcxx_prefix = NULL;
+  if (config.is_cxx) {
+    if (config.clang_type == CLANG_FAST_TYPE) {
+      libcxx_prefix = getenv("ANGORA_LIBCXX_FAST_PREFIX");
+      if (!libcxx_prefix) {
+        FATAL("ANGORA_LIBCXX_FAST_PREFIX is not set");
+      }
+    } else if (config.clang_type == CLANG_TRACK_TYPE) {
+      libcxx_prefix = getenv("ANGORA_LIBCXX_TRACK_PREFIX");
+      if (!libcxx_prefix) {
+        FATAL("ANGORA_LIBCXX_TRACK_PREFIX is not set");
+      }
     }
-    else if (clang_type == CLANG_TRACK_TYPE) {
-      cc_params[cc_par_cnt++] = alloc_printf("-L%s/lib/libcxx_track/", obj_path);
-      cc_params[cc_par_cnt++] = "-stdlib=libc++";
-      cc_params[cc_par_cnt++] = "-Wl,--start-group";
-      cc_params[cc_par_cnt++] = "-lc++abitrack";
-      cc_params[cc_par_cnt++] = "-lc++abi";
-      cc_params[cc_par_cnt++] = "-Wl,--end-group";
-    }
+    assert(libcxx_prefix != NULL);
+
+    cc_params[cc_par_cnt++] = "-stdlib=libc++";
+    cc_params[cc_par_cnt++] = "-nostdinc++";
+    cc_params[cc_par_cnt++] = alloc_printf("-I%s/include/c++/v1", libcxx_prefix);
   }
 
   if (maybe_linking) {
@@ -392,7 +425,18 @@ static void edit_params(u32 argc, char **argv) {
       cc_params[cc_par_cnt++] = "none";
     }
 
-    add_angora_runtime();
+    add_dfsan_runtime(&cc_par_cnt, cc_params, &config);
+
+    if (config.is_cxx) {
+      // libc++ should be linked before the runtime because it relies on the
+      // wrappers for the allocator, which are in the runtime.
+      assert(libcxx_prefix != NULL);
+      cc_params[cc_par_cnt++] = "-nostdlib++";
+      cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libc++.a", libcxx_prefix);
+      cc_params[cc_par_cnt++] = alloc_printf("%s/lib/libc++abi.a", libcxx_prefix);
+    }
+
+    add_angora_runtime(&cc_par_cnt, cc_params, &config);
 
     switch (bit_mode) {
     case 0:
@@ -410,6 +454,96 @@ static void edit_params(u32 argc, char **argv) {
   }
 
   cc_params[cc_par_cnt] = NULL;
+
+  return cc_params;
+}
+
+enum flags_mode {
+  FLAGS_MODE_UNKNOWN,
+  FLAGS_MODE_COMPILER,
+  FLAGS_MODE_LINKER,
+};
+
+struct arguments {
+  enum flags_mode mode;
+};
+
+static error_t parse_opt(int key, char *arg, struct argp_state *state) {
+  struct arguments *arguments = state->input;
+
+  switch (key) {
+  case 'l':
+    if (arguments->mode == FLAGS_MODE_UNKNOWN) {
+      arguments->mode = FLAGS_MODE_LINKER;
+    } else {
+      argp_error(state, "Only one between --compiler and --linker is allowed");
+    }
+    break;
+
+  case 'c':
+    if (arguments->mode == FLAGS_MODE_UNKNOWN) {
+      arguments->mode = FLAGS_MODE_COMPILER;
+    } else {
+      argp_error(state, "Only one between --compiler and --linker is allowed");
+    }
+    break;
+
+  case ARGP_KEY_END:
+    if (arguments->mode == FLAGS_MODE_UNKNOWN) {
+      argp_error(state, "One between --compiler and --linker is required");
+    }
+    break;
+
+  default:
+    return ARGP_ERR_UNKNOWN;
+  }
+
+  return 0;
+}
+
+int flags_main(int argc, char *argv[argc + 1]) {
+  static struct argp_option options[] = {
+      {"compiler", 'c', 0, 0, "Show compiler flags"},
+      {"linker", 'l', 0, 0, "Show linker flags"},
+      {0}};
+
+  static struct argp argp = {options, parse_opt, 0, 0};
+
+  struct arguments arguments = {
+      .mode = FLAGS_MODE_UNKNOWN,
+  };
+
+  argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+  char *name = strrchr(argv[0], '/');
+  if (!name) {
+    name = argv[0];
+  } else {
+    name++;
+  }
+  struct config config = parse_config(name);
+
+  char **cc_params = ck_alloc((argc + 128) * sizeof(char *));
+  size_t cc_par_cnt = 0;
+
+  switch (arguments.mode) {
+  case FLAGS_MODE_COMPILER:
+    add_angora_pass(&cc_par_cnt, cc_params, &config);
+    add_dfsan_pass(&cc_par_cnt, cc_params, &config);
+    break;
+  case FLAGS_MODE_LINKER:
+    add_angora_runtime(&cc_par_cnt, cc_params, &config);
+    break;
+  default:
+    __builtin_unreachable();
+  }
+
+  for (size_t idx = 0; idx < cc_par_cnt; idx++) {
+    printf("%s ", cc_params[idx]);
+  }
+  printf("\n");
+
+  return 0;
 }
 
 /* Main entry point */
@@ -443,19 +577,39 @@ int main(int argc, char **argv) {
     exit(1);
   }
 
-  find_obj(argv[0]);
+  verify_installation();
 
-  edit_params(argc, argv);
-  /*
-  for (int i = 0; i < cc_par_cnt; i++) {
-    printf("%s ", cc_params[i]);
+  if (getenv("FLAGS_MODE")) {
+    return flags_main(argc, argv);
   }
-  printf("\n");
-  */
- 
-  execvp(cc_params[0], (char **)cc_params);
 
-  FATAL("Oops, failed to execute '%s' - check your PATH", cc_params[0]);
+  char **cc_params = edit_params(argc, argv);
+
+  pid_t pid = fork();
+  if (pid == -1) {
+    perror("could not fork compiler process");
+    exit(EXIT_FAILURE);
+  } else if (pid == 0) {
+    execvp(cc_params[0], cc_params);
+    FATAL("Oops, failed to execute '%s' - check your PATH", cc_params[0]);
+  } else {
+    int status;
+    pid_t waited_pid = wait(&status);
+    if (waited_pid == -1) {
+      perror("could not wait compiler process");
+      exit(EXIT_FAILURE);
+    }
+
+    if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
+      printf("Compilation failed, real cmdline was: ");
+      for (char **iter = cc_params; *iter; ++iter) {
+        printf("%s ", *iter);
+      }
+      printf("\n");
+
+      exit(EXIT_FAILURE);
+    }
+  }
 
   return 0;
 }

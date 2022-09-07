@@ -1,6 +1,6 @@
 use super::*;
 use crate::cond_stmt::{CondState, CondStmt};
-use serde_derive::Serialize;
+use serde::Serialize;
 
 #[derive(Clone, Default, Serialize)]
 struct PendingCounter {
@@ -20,7 +20,7 @@ impl PendingCounter {
 
 impl fmt::Display for PendingCounter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}d - {}p", self.done, self.pending)
+        write!(f, "{} done - {} pending", self.done, self.pending)
     }
 }
 
@@ -62,11 +62,21 @@ impl StateStats {
 
 impl fmt::Display for StateStats {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
+        writeln!(
             f,
-            r#"           |    NORMAL: {},   NORMAL_END: {},   ONE_BYTE: {}
-           |       DET: {},    TIMEOUT: {},     UNSOLVABLE: {}"#,
-            self.normal, self.normal_end, self.one_byte, self.det, self.timeout, self.unsolvable,
-        )
+            "           |   NORMAL: {}, NORMAL_END: {}",
+            self.normal, self.normal_end,
+        )?;
+        writeln!(
+            f,
+            "           | ONE_BYTE: {},        DET: {}",
+            self.one_byte, self.det,
+        )?;
+        writeln!(
+            f,
+            "           |  TIMEOUT: {}, UNSOLVABLE: {}",
+            self.timeout, self.unsolvable,
+        )?;
+        Ok(())
     }
 }

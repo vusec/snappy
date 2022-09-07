@@ -8,6 +8,7 @@ pub static TRACK_OUTPUT_VAR: &str = "ANGORA_TRACK_OUTPUT";
 pub static COND_STMT_ENV_VAR: &str = "ANGORA_COND_STMT_SHM_ID";
 pub static BRANCHES_SHM_ENV_VAR: &str = "ANGORA_BRANCHES_SHM_ID";
 pub static LD_LIBRARY_PATH_VAR: &str = "LD_LIBRARY_PATH";
+pub const RUST_LOG_VARNAME: &str = "RUST_LOG";
 pub static ASAN_OPTIONS_VAR: &str = "ASAN_OPTIONS";
 pub static MSAN_OPTIONS_VAR: &str = "MSAN_OPTIONS";
 pub static ASAN_OPTIONS_CONTENT: &str =
@@ -27,7 +28,7 @@ pub static FORKSRV_SOCKET_PATH_VAR: &str = "ANGORA_FORKSRV_SOCKET_PATH";
 
 // command.rs
 pub static ANGORA_DIR_NAME: &str = "angora";
-pub static ANGORA_LOG_FILE: &str = "angora.log";
+pub static ANGORA_LOG_FILE: &str = "angora_log.csv";
 pub static COND_QUEUE_FILE: &str = "cond_queue.csv";
 pub static CHART_STAT_FILE: &str = "chart_stat.json";
 

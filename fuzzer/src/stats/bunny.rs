@@ -1,4 +1,4 @@
-use rand::{thread_rng, Rng};
+use rand::prelude::*;
 
 // TODO move
 
@@ -26,7 +26,7 @@ fn get_bunny_logo3() -> String {
 }
 
 pub fn get_bunny_logo() -> String {
-    match thread_rng().gen_range(0, 4) {
+    match thread_rng().gen_range(0..4) {
         0 => get_bunny_logo0(),
         1 => get_bunny_logo1(),
         2 => get_bunny_logo2(),

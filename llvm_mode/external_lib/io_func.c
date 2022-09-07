@@ -17,16 +17,16 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "./ffds.h"
-#include "./len_label.h"
-#include "./defs.h"
-#include "./dfsan_interface.h"
+#include "ffds.h"
+#include "len_label.h"
+#include "defs.h"
+#include "sanitizer/angora_dfsan_interface.h"
 
 static int granularity = 1; // byte level
 
 extern void __angora_track_fini_rs();
 
-__attribute__((destructor(0))) void __angora_track_fini(void) {
+__attribute__((destructor)) void __angora_track_fini(void) {
   __angora_track_fini_rs();
 }
 
@@ -582,4 +582,18 @@ __dfsw___lxstat(int vers, const char *path, struct stat *buf,
   }
   *ret_label = 0;
   return ret;
+}
+
+__attribute__((visibility("default"))) long
+__dfsw_ftell(FILE *stream, dfsan_label stream_label, dfsan_label *ret_label) {
+  long offset = ftell(stream);
+
+  if (offset >= 0) {
+    dfsan_label len_label = __angora_get_sp_label(offset, 1);
+    *ret_label = len_label;
+  } else {
+    *ret_label = 0;
+  }
+
+  return offset;
 }

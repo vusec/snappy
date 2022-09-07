@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 // ************ Switches **************
 // length
 pub const ENABLE_INPUT_LEN_EXPLORATION: bool = true;
@@ -9,7 +11,7 @@ pub const DISABLE_INFER_SHAPE_IF_HAS_AND_OP: bool = true;
 pub const PREFER_FAST_COND: bool = true;
 
 // ************ Resources ****************
-pub const MAX_INPUT_LEN: usize = 15000;
+pub const MAX_INPUT_LEN: usize = 1048576;
 
 // branch.rs
 pub const MAP_SIZE_POW2: usize = 20;
@@ -19,7 +21,7 @@ pub const BRANCHES_SIZE: usize = 1 << MAP_SIZE_POW2;
 pub const TMOUT_SKIP: usize = 3;
 pub const TIME_LIMIT: u64 = 1;
 pub const MEM_LIMIT: u64 = 200; // MB
-pub const TIME_LIMIT_TRACK: u64 = 12;
+pub const TIME_LIMIT_TRACK: Duration = Duration::from_secs(12);
 pub const MEM_LIMIT_TRACK: u64 = 0;
 pub const LONG_FUZZ_TIME: usize = 8;
 pub const MAX_INVARIABLE_NUM: usize = 16;

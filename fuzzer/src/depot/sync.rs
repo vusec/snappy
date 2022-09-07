@@ -1,5 +1,4 @@
-use super::*;
-use crate::executor::Executor;
+use crate::{depot::file::read_from_file, executor::Executor};
 use angora_common::{config, defs};
 use std::{
     collections::HashMap,
@@ -13,26 +12,35 @@ use std::{
 
 pub fn sync_depot(executor: &mut Executor, running: Arc<AtomicBool>, dir: &Path) {
     executor.local_stats.clear();
-    let seed_dir = dir.read_dir().expect("read_dir call failed");
-    for entry in seed_dir {
-        if let Ok(entry) = entry {
-            if !running.load(Ordering::SeqCst) {
-                break;
-            }
-            let path = &entry.path();
-            if path.is_file() {
-                let file_len =
-                    fs::metadata(path).expect("Could not fetch metadata.").len() as usize;
+
+    let dir_iter = dir.read_dir().expect("read_dir call failed");
+    for dir_entry in dir_iter {
+        if !running.load(Ordering::SeqCst) {
+            break;
+        }
+
+        if let Ok(dir_entry) = dir_entry {
+            let entry_path = dir_entry.path();
+            if entry_path.is_file() {
+                let file_len = dir_entry
+                    .metadata()
+                    .expect("Could not fetch metadata.")
+                    .len() as usize;
+
                 if file_len < config::MAX_INPUT_LEN {
-                    let buf = read_from_file(path);
+                    let buf = read_from_file(&entry_path);
                     executor.run_sync(&buf);
                 } else {
-                    warn!("Seed discarded, too long: {:?}", path);
+                    log::warn!("Seed discarded, too long: {:?}", entry_path);
                 }
             }
         }
     }
-    info!("sync {} file from seeds.", executor.local_stats.num_inputs);
+
+    log::info!(
+        "Synced {} files from seeds.",
+        executor.local_stats.num_inputs
+    );
     executor.update_log();
 }
 

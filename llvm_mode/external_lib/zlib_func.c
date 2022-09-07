@@ -1,6 +1,6 @@
 #include <zlib.h>
-#include "./defs.h"
-#include "./dfsan_interface.h"
+#include "defs.h"
+#include "sanitizer/angora_dfsan_interface.h"
 
 // zlib_abilist line 104: fn:crc32=custom
 __attribute__((visibility("default"))) uLong

@@ -1,6 +1,6 @@
 use super::*;
 use crate::{cond_stmt::CondStmt, executor::StatusType};
-use rand;
+use rand::prelude::*;
 use std::{
     fs,
     io::prelude::*,
@@ -79,8 +79,8 @@ impl Depot {
         self.num_inputs.load(Ordering::Relaxed) == 0
     }
 
-    pub fn next_random(&self) -> usize {
-        rand::random::<usize>() % self.num_inputs.load(Ordering::Relaxed)
+    pub fn next_random<R: Rng + ?Sized>(&self, rng: &mut R) -> usize {
+        rng.gen::<usize>() % self.num_inputs.load(Ordering::Relaxed)
     }
 
     pub fn get_input_buf(&self, id: usize) -> Vec<u8> {
@@ -136,6 +136,13 @@ impl Depot {
                         }
                     }
                 } else {
+                    log::trace!(
+                        "New condition inserted in queue: ({},{},{})",
+                        cond.base.cmpid,
+                        cond.base.context,
+                        cond.base.order
+                    );
+
                     let priority = QPriority::init(cond.base.op);
                     q.push(cond, priority);
                 }

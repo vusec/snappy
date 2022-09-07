@@ -1,2 +1,18 @@
-install (FILES "angora_abilist.txt" DESTINATION ${ANGORA_RULE_DIR})
-install (FILES "exploitation_list.txt" DESTINATION ${ANGORA_RULE_DIR})
+install(FILES "angora_abilist.txt" DESTINATION share)
+list(APPEND TMP_ANGORA_ABILISTS_BUILD
+     "${CMAKE_CURRENT_SOURCE_DIR}/angora_abilist.txt")
+list(APPEND TMP_ANGORA_ABILISTS_INSTALL
+     "${CMAKE_INSTALL_PREFIX}/share/angora_abilist.txt")
+
+install(FILES "exploitation_list.txt" DESTINATION share)
+list(APPEND TMP_ANGORA_ABILISTS_BUILD
+     "${CMAKE_CURRENT_SOURCE_DIR}/exploitation_list.txt")
+list(APPEND TMP_ANGORA_ABILISTS_INSTALL
+     "${CMAKE_INSTALL_PREFIX}/share/exploitation_list.txt")
+
+set(TMP_ANGORA_ABILISTS_BUILD
+    ${TMP_ANGORA_ABILISTS_BUILD}
+    PARENT_SCOPE)
+set(TMP_ANGORA_ABILISTS_INSTALL
+    ${TMP_ANGORA_ABILISTS_INSTALL}
+    PARENT_SCOPE)

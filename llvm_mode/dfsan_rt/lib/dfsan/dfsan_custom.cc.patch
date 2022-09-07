@@ -1,0 +1,192 @@
+--- /home/egeretto/builds/llvm-project/source/compiler-rt/lib/dfsan/dfsan_custom.cc	2021-03-03 18:22:49.511638979 +0100
++++ dfsan_custom.cc	2021-03-03 18:26:41.550983410 +0100
+@@ -51,29 +51,6 @@
+   SANITIZER_INTERFACE_ATTRIBUTE SANITIZER_WEAK_ATTRIBUTE void f(__VA_ARGS__);
+ 
+ extern "C" {
+-SANITIZER_INTERFACE_ATTRIBUTE int __dfsw_stat(const char *path,
+-                                              struct stat *buf,
+-                                              dfsan_label path_label,
+-                                              dfsan_label buf_label,
+-                                              dfsan_label *ret_label) {
+-  int ret = stat(path, buf);
+-  if (ret == 0)
+-    dfsan_set_label(0, buf, sizeof(struct stat));
+-  *ret_label = 0;
+-  return ret;
+-}
+-
+-SANITIZER_INTERFACE_ATTRIBUTE int __dfsw_fstat(int fd, struct stat *buf,
+-                                               dfsan_label fd_label,
+-                                               dfsan_label buf_label,
+-                                               dfsan_label *ret_label) {
+-  int ret = fstat(fd, buf);
+-  if (ret == 0)
+-    dfsan_set_label(0, buf, sizeof(struct stat));
+-  *ret_label = 0;
+-  return ret;
+-}
+-
+ SANITIZER_INTERFACE_ATTRIBUTE char *__dfsw_strchr(const char *s, int c,
+                                                   dfsan_label s_label,
+                                                   dfsan_label c_label,
+@@ -223,16 +200,6 @@
+   return 0;
+ }
+ 
+-SANITIZER_INTERFACE_ATTRIBUTE void *__dfsw_calloc(size_t nmemb, size_t size,
+-                                                  dfsan_label nmemb_label,
+-                                                  dfsan_label size_label,
+-                                                  dfsan_label *ret_label) {
+-  void *p = calloc(nmemb, size);
+-  dfsan_set_label(0, p, nmemb * size);
+-  *ret_label = 0;
+-  return p;
+-}
+-
+ SANITIZER_INTERFACE_ATTRIBUTE size_t __dfsw_strlen(const char *s,
+                                                    dfsan_label s_label,
+                                                    dfsan_label *ret_label) {
+@@ -266,6 +233,18 @@
+ }
+ 
+ SANITIZER_INTERFACE_ATTRIBUTE
++void *__dfsw___mempcpy_chk(void *dest, const void *src, size_t n,
++                           size_t dst_len, dfsan_label dest_label,
++                           dfsan_label src_label, dfsan_label n_label,
++                           dfsan_label dst_len_label, dfsan_label *ret_label) {
++  if (dst_len < n) {
++    // __chk_fail ();
++  }
++  *ret_label = dest_label;
++  return dfsan_memcpy(dest, src, n);
++}
++
++SANITIZER_INTERFACE_ATTRIBUTE
+ void *__dfsw_memset(void *s, int c, size_t n, dfsan_label s_label,
+                     dfsan_label c_label, dfsan_label n_label,
+                     dfsan_label *ret_label) {
+@@ -274,6 +253,15 @@
+   return s;
+ }
+ 
++SANITIZER_INTERFACE_ATTRIBUTE
++char *__dfsw_strcat(char *dest, const char *src, dfsan_label d_label,
++                    dfsan_label s_label, dfsan_label *ret_label) {
++  size_t len = strlen(dest);
++  dfsan_memcpy(dest + len, src, strlen(src) + 1);
++  *ret_label = d_label;
++  return dest;
++}
++
+ SANITIZER_INTERFACE_ATTRIBUTE char *__dfsw_strdup(const char *s,
+                                                   dfsan_label s_label,
+                                                   dfsan_label *ret_label) {
+@@ -284,6 +272,31 @@
+   return static_cast<char *>(p);
+ }
+ 
++SANITIZER_INTERFACE_ATTRIBUTE char *__dfsw___strdup(const char *s,
++                                                    dfsan_label s_label,
++                                                    dfsan_label *ret_label) {
++  size_t len = strlen(s);
++  void *p = malloc(len + 1);
++  dfsan_memcpy(p, s, len + 1);
++  *ret_label = 0;
++  return static_cast<char *>(p);
++}
++
++SANITIZER_INTERFACE_ATTRIBUTE char *__dfsw___strndup(const char *s, size_t n,
++                                                     dfsan_label s_label,
++                                                     dfsan_label n_label,
++                                                     dfsan_label *ret_label) {
++  size_t len = strlen(s);
++  if (len > n)
++    len = n;
++  void *p = malloc(len + 1);
++  dfsan_memcpy(p, s, len);
++  *((char *)p + len) = '\0';
++
++  *ret_label = 0;
++  return static_cast<char *>(p);
++}
++
+ SANITIZER_INTERFACE_ATTRIBUTE char *__dfsw_strncpy(
+     char *s1, const char *s2, size_t n, dfsan_label s1_label,
+     dfsan_label s2_label, dfsan_label n_label, dfsan_label *ret_label) {
+@@ -299,27 +312,6 @@
+   return s1;
+ }
+ 
+-SANITIZER_INTERFACE_ATTRIBUTE ssize_t __dfsw_pread(
+-    int fd, void *buf, size_t count, off_t offset, dfsan_label fd_label,
+-    dfsan_label buf_label, dfsan_label count_label, dfsan_label offset_label,
+-    dfsan_label *ret_label) {
+-  ssize_t ret = pread(fd, buf, count, offset);
+-  if (ret > 0)
+-    dfsan_set_label(0, buf, ret);
+-  *ret_label = 0;
+-  return ret;
+-}
+-
+-SANITIZER_INTERFACE_ATTRIBUTE ssize_t __dfsw_read(
+-    int fd, void *buf, size_t count, dfsan_label fd_label,
+-    dfsan_label buf_label, dfsan_label count_label, dfsan_label *ret_label) {
+-  ssize_t ret = read(fd, buf, count);
+-  if (ret > 0)
+-    dfsan_set_label(0, buf, ret);
+-  *ret_label = 0;
+-  return ret;
+-}
+-
+ SANITIZER_INTERFACE_ATTRIBUTE int __dfsw_clock_gettime(clockid_t clk_id,
+                                                        struct timespec *tp,
+                                                        dfsan_label clk_id_label,
+@@ -434,20 +426,6 @@
+ }
+ 
+ SANITIZER_INTERFACE_ATTRIBUTE
+-char *__dfsw_fgets(char *s, int size, FILE *stream, dfsan_label s_label,
+-                   dfsan_label size_label, dfsan_label stream_label,
+-                   dfsan_label *ret_label) {
+-  char *ret = fgets(s, size, stream);
+-  if (ret) {
+-    dfsan_set_label(0, ret, strlen(ret) + 1);
+-    *ret_label = s_label;
+-  } else {
+-    *ret_label = 0;
+-  }
+-  return ret;
+-}
+-
+-SANITIZER_INTERFACE_ATTRIBUTE
+ char *__dfsw_getcwd(char *buf, size_t size, dfsan_label buf_label,
+                     dfsan_label size_label, dfsan_label *ret_label) {
+   char *ret = getcwd(buf, size);
+@@ -1131,26 +1109,4 @@
+   va_end(ap);
+   return ret;
+ }
+-
+-// Default empty implementations (weak). Users should redefine them.
+-SANITIZER_INTERFACE_WEAK_DEF(void, __sanitizer_cov_trace_pc_guard, u32 *) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __sanitizer_cov_trace_pc_guard_init, u32 *,
+-                             u32 *) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __sanitizer_cov_pcs_init, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __sanitizer_cov_trace_pc_indir, void) {}
+-
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_cmp, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_cmp1, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_cmp2, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_cmp4, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_cmp8, void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_const_cmp1,
+-                             void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_const_cmp2,
+-                             void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_const_cmp4,
+-                             void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_const_cmp8,
+-                             void) {}
+-SANITIZER_INTERFACE_WEAK_DEF(void, __dfsw___sanitizer_cov_trace_switch, void) {}
+ }  // extern "C"

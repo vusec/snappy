@@ -1,8 +1,8 @@
 use super::CondState;
 use crate::fuzz_type::FuzzType;
 use angora_common::{cond_stmt_base::CondStmtBase, defs, tag::TagSeg};
+use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
-use serde_derive::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct CondStmt {
@@ -109,6 +109,7 @@ impl CondStmt {
         afl_cond.speed = speed;
         afl_cond.base.op = defs::COND_AFL_OP;
         afl_cond.base.cmpid = id as u32;
+        afl_cond.base.belong = id as u32;
         afl_cond.base.context = 0;
         afl_cond.base.order = 0;
         afl_cond.base.arg1 = edge_num as u64;

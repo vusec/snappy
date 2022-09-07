@@ -89,7 +89,7 @@ if __name__ == "__main__":
     while True:
         print("-" * 80)
         t = int(time.time()) - t0
-        print("time:", t);
+        print("time:", t)
         bugs_id = locate_crashes(crash_dirs, prom, flags, unique_dir)
         id_lists = list(bugs_id.keys())
         id_lists.sort()

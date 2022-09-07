@@ -1,0 +1,37 @@
+--- /home/egeretto/builds/llvm-project/source/compiler-rt/lib/dfsan/dfsan.h	2021-03-03 18:22:30.446608371 +0100
++++ dfsan.h	2021-03-03 16:48:12.918161105 +0100
+@@ -19,22 +19,16 @@
+ #include "dfsan_platform.h"
+ 
+ using __sanitizer::uptr;
+-using __sanitizer::u16;
++using __sanitizer::u32;
+ 
+ // Copy declarations from public sanitizer/dfsan_interface.h header here.
+-typedef u16 dfsan_label;
+-
+-struct dfsan_label_info {
+-  dfsan_label l1;
+-  dfsan_label l2;
+-  const char *desc;
+-  void *userdata;
+-};
++typedef u32 dfsan_label;
+ 
+ extern "C" {
+ void dfsan_add_label(dfsan_label label, void *addr, uptr size);
+ void dfsan_set_label(dfsan_label label, void *addr, uptr size);
+ dfsan_label dfsan_read_label(const void *addr, uptr size);
++dfsan_label * dfsan_shadow_for(void * addr);
+ dfsan_label dfsan_union(dfsan_label l1, dfsan_label l2);
+ }  // extern "C"
+ 
+@@ -48,7 +42,7 @@
+ void InitializeInterceptors();
+ 
+ inline dfsan_label *shadow_for(void *ptr) {
+-  return (dfsan_label *) ((((uptr) ptr) & ShadowMask()) << 1);
++  return (dfsan_label *) ((((uptr) ptr) & ShadowMask()) << 2);
+ }
+ 
+ inline const dfsan_label *shadow_for(const void *ptr) {
