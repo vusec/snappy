@@ -396,12 +396,7 @@ impl Executor {
         skip |= self.check_invariable(output, cond);
         self.check_consistent(output, cond);
 
-        // Parse the coverage map only if the condition was solved, otherwise just reset it.
-        if explored == true {
-            self.do_if_has_new(buf, status, explored, cond.base.cmpid);
-        } else {
-            self.branches.clear_trace();
-        }
+        self.do_if_has_new(buf, status, explored, cond.base.cmpid);
 
         status = self.check_timeout(status, cond);
 
